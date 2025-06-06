@@ -43,25 +43,43 @@ end;
 architecture Mixed of processor is
     -- the top 3 bits determines what class of instruction
 
-    -- 000xxxxx xxxIIIII IxxxxxII IIIIIIII: A type (16 bit immediate)
-    -- 00000000 000IIIII IaaaaaII IIIIIIII: reg[a] = imm
-    -- 00000000 001IIIII IaaaaaII IIIIIIII: reg[a] = imm << 16
+    --  3 2 2 2  2 2 1 1  1 1 1
+    --  0 8 6 4  2 0 8 6  4 2 0 8  6 4 2 0
+    -- 3 2 2 2  2 2 1 1  1 1 1
+    -- 1 9 7 5  3 1 9 7  5 3 1 9  7 5 3 1
 
-    -- 001xxxxx xxxxxxxx xaaaaabb bbbccccc: B type (up to 3 registers)
-    -- 00100000 00000000 0aaaaabb bbbccccc: reg[a] = reg[b] + reg[c]
-    -- 00100000 00000000 1aaaaabb bbbccccc: reg[a] = reg[b] - reg[c]
-    -- 00100001 00000000 0aaaaabb bbbccccc: reg[a] = reg[b] | reg[c]
-    -- 00100001 00000000 1aaaaabb bbbccccc: reg[a] = reg[b] & reg[c]
-    -- 00100010 00000000 0aaaaabb bbbxxxxx: reg[a] = memory[reg[b]]
-    -- 00100010 00000000 1aaaaabb bbbxxxxx: memory[reg[a]] = reg[b]
+    -- 001ddddd 00000000 IIIIIIII IIIIIIII: reg[d] = zext(imm)
+    -- 001ddddd 00000001 IIIIIIII IIIIIIII: reg[d] = sext(imm)
+    -- 001ddddd 00000010 IIIIIIII IIIIIIII: reg[d] = imm << 16
+    -- 001ddddd rrrrr100 IIIIIIII IIIIIIII: reg[d] = mem[reg[r] + sext(imm)]
+    -- 001ddddd rrrrr101 IIIIIIII IIIIIIII: mem[reg[d] + sext(imm)] = reg[r]
 
-    -- 100xxxxx xxxxxxxx xxxxxxxx xxxxxxxx: E type (CPU state)
-    -- 10000000 00000000 00000000 000ccccc: reg[c] = IP
-    -- 10000001 00000000 00000000 000ccccc: IP = reg[c]
+    -- 01000000 dddddrrr rrsssss0 00000000: reg[d] = reg[r] + reg[s]
+    -- 01000001 dddddrrr rrsssss0 00000000: reg[d] = reg[r] - reg[s]
+    -- 01000010 dddddrrr rrsssss0 00000000: reg[d] = reg[r] * reg[s]
+    -- 01000011 dddddrrr rrsssss0 00000000: reg[d] = reg[r] / reg[s]
+    -- 01000100 dddddrrr rrsssss0 00000000: reg[d] = reg[r] & reg[s]
+    -- 01000101 dddddrrr rrsssss0 00000000: reg[d] = reg[r] | reg[s]
+    -- 01000110 dddddrrr rrsssss0 00000000: reg[d] = reg[r] ^ reg[s]
+    -- 01000111 dddddrrr rrsssss0 00000000: reg[d] = ~(reg[r] | reg[s])
+    -- 01010000 dddddrrr rrsssss0 00000000: reg[d] = (reg[r] == reg[s]) ? 1 : 0
+    -- 01010001 dddddrrr rrsssss0 00000000: reg[d] = (reg[r] < reg[s]) ? 1 : 0
+    -- 01010010 dddddrrr rrsssss0 00000000: reg[d] = (reg[r] > reg[s]) ? 1 : 0
+    -- 01010101 dddddrrr rrsssss0 00000000: reg[d] = (reg[r] <s reg[s]) ? 1 : 0
+    -- 01010110 dddddrrr rrsssss0 00000000: reg[d] = (reg[r] >s reg[s]) ? 1 : 0
 
-    -- 111xxxxx xxxxxxxx xxxxxxxx xxxxxxxx: X type (development/simulation)
-    -- 11100000 00000000 0aaaaa00 00000000: Dump reg[a]
-    -- 11111111 11111111 11111111 11111111: Dump full processor state
+    -- 011rrrrr 00000000 IIIIIIII IIIIIIII: if (reg[r] == 0) IP += sext(imm)
+    -- 011rrrrr 00000001 IIIIIIII IIIIIIII: if (reg[r] != 0) IP += sext(imm)
+    -- 011rrrrr sssss100 00000000 00000000: if (reg[r] == 0) IP = reg[s]
+    -- 011rrrrr sssss101 00000000 00000000: if (reg[r] != 0) IP = reg[s]
+
+    -- 10000000 ddddd000 00000000 00000000: reg[d] = IP
+    -- 10000001 ddddd000 00000000 00000000: IP = reg[d]
+    -- 10000010 00000000 00000000 00000000: freeze
+    -- 10000011 00000000 00000000 00000000: nop
+
+    -- 11100000 aaaaa000 00000000 00000000: Dump reg[a]
+    -- 11100001 00000000 00000000 00000000: Dump full processor state
 
     -- general purpose registers
     type registers_array is array(0 to 31) of word_t;
@@ -70,18 +88,52 @@ architecture Mixed of processor is
     -- internal registers
     signal IP, IPNext, Instruction : word_t;
 
-    -- decoded instruction
-    signal IRA, IRB, IRC : std_logic_vector(4 downto 0);
-    signal IImm : std_logic_vector(15 downto 0);
-
-    type StateType is (WaitForRun, InsLoadSetup, InsLoadHold, InsLoadDone, Blehehehe, MemLoadHold, MemLoadDone, MemStoreHold);
+    type StateType is (WaitForRun, InsLoadSetup, InsLoadHold, InsLoadDone, Blehehehe, MemLoadHold, MemLoadDone, MemStoreHold, Freeze);
     signal current_state, next_state : StateType;
-begin
+
     -- decoded instruction
-    IRA <= Instruction(14 downto 10);
-    IRB <= Instruction(9 downto 5);
-    IRC <= Instruction(4 downto 0);
-    IImm <= Instruction(20 downto 15) & Instruction(9 downto 0);
+    signal Class : std_logic_vector(2 downto 0);
+
+    signal BD, BR : std_logic_vector(4 downto 0);
+    signal BO : std_logic_vector(2 downto 0);
+    signal BI : std_logic_vector(15 downto 0);
+
+    signal CO : std_logic_vector(4 downto 0);
+    signal CD, CR, CS : std_logic_vector(4 downto 0);
+
+    signal DR, DS : std_logic_vector(4 downto 0);
+    signal DO : std_logic_vector(2 downto 0);
+    signal DI : std_logic_vector(15 downto 0);
+
+    signal EO : std_logic_vector(1 downto 0);
+    signal ED : std_logic_vector(4 downto 0);
+
+    signal XO : std_logic_vector(0 downto 0);
+    signal XA : std_logic_vector(4 downto 0);
+begin
+    -- instruction decoder
+    Class <= Instruction(31 downto 29);
+
+    BD <= Instruction(28 downto 24);
+    BR <= Instruction(23 downto 19);
+    BO <= Instruction(18 downto 16);
+    BI <= Instruction(15 downto 0);
+
+    CO <= Instruction(28 downto 24);
+    CD <= Instruction(23 downto 19);
+    CR <= Instruction(18 downto 14);
+    CS <= Instruction(13 downto 9);
+
+    DR <= Instruction(28 downto 24);
+    DS <= Instruction(23 downto 19);
+    DO <= Instruction(18 downto 16);
+    DI <= Instruction(15 downto 0);
+
+    EO <= Instruction(25 downto 24);
+    ED <= Instruction(23 downto 19);
+
+    XO <= Instruction(24 downto 24);
+    XA <= Instruction(23 downto 19);
 
     process(Reset, Clock)
     begin
@@ -90,9 +142,9 @@ begin
             R <= (others => (others => '0'));
             IP <= (others => '0');
         elsif rising_edge(Clock) then
-            current_state <= next_state;
             R <= RNext;
             IP <= IPNext;
+            current_state <= next_state;
         end if;
     end process;
 
@@ -131,83 +183,171 @@ begin
                 IPNext <= word_t(unsigned(IP) + 1);
                 next_state <= Blehehehe;
             when Blehehehe =>
+                next_state <= Freeze;
                 report "insn: " & to_string(Instruction);
 
-                if false then
-                    -- formatting
-                elsif std_match("00000000000---------------------", Instruction) then
-                    -- reg[a] = imm
-                    RNext(to_integer(unsigned(IRA))) <= "0000000000000000" & IImm;
-                    next_state <= WaitForRun;
-                elsif std_match("00000000001---------------------", Instruction) then
-                    -- reg[a] = imm << 16
-                    RNext(to_integer(unsigned(IRA))) <= IImm & "0000000000000000";
-                    next_state <= WaitForRun;
-                elsif std_match("00100000000000000---------------", Instruction) then
-                    -- reg[a] = reg[b] + reg[c]
-                    RNext(to_integer(unsigned(IRA))) <= word_t(unsigned(R(to_integer(unsigned(IRB)))) + unsigned(R(to_integer(unsigned(IRC)))));
-                    next_state <= WaitForRun;
-                elsif std_match("00100000000000001---------------", Instruction) then
-                    -- reg[a] = reg[b] - reg[c]
-                    RNext(to_integer(unsigned(IRA))) <= word_t(unsigned(R(to_integer(unsigned(IRB)))) - unsigned(R(to_integer(unsigned(IRC)))));
-                    next_state <= WaitForRun;
-                elsif std_match("00100001000000000---------------", Instruction) then
-                    -- reg[a] = reg[b] | reg[c]
-                    RNext(to_integer(unsigned(IRA))) <= R(to_integer(unsigned(IRB))) or R(to_integer(unsigned(IRC)));
-                    next_state <= WaitForRun;
-                elsif std_match("00100001000000001---------------", Instruction) then
-                    -- reg[a] = reg[b] & reg[c]
-                    RNext(to_integer(unsigned(IRA))) <= R(to_integer(unsigned(IRB))) and R(to_integer(unsigned(IRC)));
-                    next_state <= WaitForRun;
-                elsif std_match("00100010000000000---------------", Instruction) then
-                    -- reg[a] = memory[reg[b]]
-                    MemoryEnable <= '1';
-                    WriteEnable <= '0';
-                    Address <= R(to_integer(unsigned(IRB)));
-                    next_state <= MemLoadHold;
-                elsif std_match("00100010000000001---------------", Instruction) then
-                    -- memory[reg[a]] = reg[b]
-                    MemoryEnable <= '1';
-                    WriteEnable <= '1';
-                    Address <= R(to_integer(unsigned(IRA)));
-                    DOut <= R(to_integer(unsigned(IRB)));
-                    next_state <= MemStoreHold;
-                elsif std_match("100000000000000000000000000-----", Instruction) then
-                    -- reg[c] = IP
-                    RNext(to_integer(unsigned(IRC))) <= IP;
-                    next_state <= WaitForRun;
-                elsif std_match("100000010000000000000000000-----", Instruction) then
-                    -- IP = reg[c]
-                    IPNext <= R(to_integer(unsigned(IRC)));
-                    next_state <= WaitForRun;
-                elsif std_match("11100000000000000-----0000000000", Instruction) then
-                    -- Dump reg[a]
-                    report "Register " & integer'image(to_integer(unsigned(IRA))) & " has value " & to_string(R(to_integer(unsigned(IRA))));
-                    next_state <= WaitForRun;
-                else
-                    -- Dump full processor state
-                    report "todo dump state";
+                case Class is
+                    when "001" => case BO is
+                        when "000" =>
+                            RNext(to_integer(unsigned(BD))) <= word_t(resize(unsigned(BI), 32));
+                            next_state <= WaitForRun;
+                        when "001" =>
+                            RNext(to_integer(unsigned(BD))) <= word_t(resize(signed(BI), 32));
+                            next_state <= WaitForRun;
+                        when "010" =>
+                            RNext(to_integer(unsigned(BD))) <= BI & (15 downto 0 => '0');
+                            next_state <= WaitForRun;
+                        when "100" =>
+                            MemoryEnable <= '1';
+                            Address <= word_t(unsigned(R(to_integer(unsigned(BR)))) + unsigned(resize(signed(BI), 32)));
+                            next_state <= MemLoadHold;
+                        when "101" =>
+                            MemoryEnable <= '1';
+                            WriteEnable <= '1';
+                            Address <= word_t(unsigned(R(to_integer(unsigned(BR)))) + unsigned(resize(signed(BI), 32)));
+                            DOut <= R(to_integer(unsigned(DR)));
+                            next_state <= MemStoreHold;
+                        when others =>
+                            null;
+                    end case;
+                    when "010" => case CO is
+                        when "00000" =>
+                            RNext(to_integer(unsigned(CD))) <= word_t(unsigned(R(to_integer(unsigned(CR)))) + unsigned(R(to_integer(unsigned(CS)))));
+                            next_state <= WaitForRun;
+                        when "00001" =>
+                            RNext(to_integer(unsigned(CD))) <= word_t(unsigned(R(to_integer(unsigned(CR)))) - unsigned(R(to_integer(unsigned(CS)))));
+                            next_state <= WaitForRun;
+                        when "00010" =>
+                            report "todo: multiply" severity FAILURE;
+                            next_state <= WaitForRun;
+                        when "00011" =>
+                            report "todo: divide" severity FAILURE;
+                            next_state <= WaitForRun;
+                        when "00100" =>
+                            RNext(to_integer(unsigned(CD))) <= word_t(unsigned(R(to_integer(unsigned(CR)))) and unsigned(R(to_integer(unsigned(CS)))));
+                            next_state <= WaitForRun;
+                        when "00101" =>
+                            RNext(to_integer(unsigned(CD))) <= word_t(unsigned(R(to_integer(unsigned(CR)))) or unsigned(R(to_integer(unsigned(CS)))));
+                            next_state <= WaitForRun;
+                        when "00110" =>
+                            RNext(to_integer(unsigned(CD))) <= word_t(unsigned(R(to_integer(unsigned(CR)))) xor unsigned(R(to_integer(unsigned(CS)))));
+                            next_state <= WaitForRun;
+                        when "00111" =>
+                            RNext(to_integer(unsigned(CD))) <= not (word_t(unsigned(R(to_integer(unsigned(CR)))) or unsigned(R(to_integer(unsigned(CS))))));
+                            next_state <= WaitForRun;
+                        when "10000" =>
+                            if unsigned(R(to_integer(unsigned(CR)))) = unsigned(R(to_integer(unsigned(CS)))) then
+                                RNext(to_integer(unsigned(CD))) <= std_logic_vector(to_unsigned(1, 32));
+                            else
+                                RNext(to_integer(unsigned(CD))) <= std_logic_vector(to_unsigned(0, 32));
+                            end if;
 
-                    if std_match("11111111111111111111111111111111", Instruction) then
-                        next_state <= WaitForRun;
-                    else
-                        report "illegal instruction";
-                        next_state <= current_state;
-                    end if;
-                end if;
+                            next_state <= WaitForRun;
+                        when "10001" =>
+                            if unsigned(R(to_integer(unsigned(CR)))) < unsigned(R(to_integer(unsigned(CS)))) then
+                                RNext(to_integer(unsigned(CD))) <= std_logic_vector(to_unsigned(1, 32));
+                            else
+                                RNext(to_integer(unsigned(CD))) <= std_logic_vector(to_unsigned(0, 32));
+                            end if;
+
+                            next_state <= WaitForRun;
+                        when "10010" =>
+                            if unsigned(R(to_integer(unsigned(CR)))) > unsigned(R(to_integer(unsigned(CS)))) then
+                                RNext(to_integer(unsigned(CD))) <= std_logic_vector(to_unsigned(1, 32));
+                            else
+                                RNext(to_integer(unsigned(CD))) <= std_logic_vector(to_unsigned(0, 32));
+                            end if;
+
+                            next_state <= WaitForRun;
+                        when "10101" =>
+                            if signed(R(to_integer(unsigned(CR)))) < signed(R(to_integer(unsigned(CS)))) then
+                                RNext(to_integer(unsigned(CD))) <= std_logic_vector(to_unsigned(1, 32));
+                            else
+                                RNext(to_integer(unsigned(CD))) <= std_logic_vector(to_unsigned(0, 32));
+                            end if;
+
+                            next_state <= WaitForRun;
+                        when "10110" =>
+                            if signed(R(to_integer(unsigned(CR)))) > signed(R(to_integer(unsigned(CS)))) then
+                                RNext(to_integer(unsigned(CD))) <= std_logic_vector(to_unsigned(1, 32));
+                            else
+                                RNext(to_integer(unsigned(CD))) <= std_logic_vector(to_unsigned(0, 32));
+                            end if;
+
+                            next_state <= WaitForRun;
+                        when others =>
+                            null;
+                    end case;
+                    when "011" => case DO is
+                        when "000" =>
+                            if R(to_integer(unsigned(DR))) = (31 downto 0 => '0') then
+                                IPNext <= word_t(unsigned(IP) + unsigned(resize(signed(DI), 32)));
+                            end if;
+
+                            next_state <= WaitForRun;
+                        when "001" =>
+                            if R(to_integer(unsigned(DR))) /= (31 downto 0 => '0') then
+                                IPNext <= word_t(unsigned(IP) + unsigned(resize(signed(DI), 32)));
+                            end if;
+
+                            next_state <= WaitForRun;
+                        when "100" =>
+                            if R(to_integer(unsigned(DR))) = (31 downto 0 => '0') then
+                                IPNext <= R(to_integer(unsigned(DS)));
+                            end if;
+
+                            next_state <= WaitForRun;
+                        when "101" =>
+                            if R(to_integer(unsigned(DR))) /= (31 downto 0 => '0') then
+                                IPNext <= R(to_integer(unsigned(DS)));
+                            end if;
+
+                            next_state <= WaitForRun;
+                        when others =>
+                            null;
+                    end case;
+                    when "100" => case EO is
+                        when "00" =>
+                            RNext(to_integer(unsigned(ED))) <= IP;
+                            next_state <= WaitForRun;
+                        when "01" =>
+                            IPNext <= R(to_integer(unsigned(ED)));
+                            next_state <= WaitForRun;
+                        when "10" =>
+                            next_state <= Freeze;
+                        when "11" =>
+                            next_state <= WaitForRun;
+                        when others =>
+                            null;
+                    end case;
+                    when "111" => case XO is
+                        when "0" =>
+                            report "Register " & integer'image(to_integer(unsigned(XA))) & " has value " & to_string(R(to_integer(unsigned(XA))));
+                            next_state <= WaitForRun;
+                        when "1" =>
+                            report "todo: full dump" severity FAILURE;
+                            next_state <= WaitForRun;
+                        when others =>
+                            null;
+                    end case;
+                    when others =>
+                        null;
+                end case;
             when MemLoadHold =>
                 MemoryEnable <= '1';
-                Address <= R(to_integer(unsigned(IRB)));
+                Address <= word_t(unsigned(R(to_integer(unsigned(BR)))) + unsigned(resize(signed(BI), 32)));
                 next_state <= MemLoadDone;
             when MemLoadDone =>
-                RNext(to_integer(unsigned(IRA))) <= DIn;
+                RNext(to_integer(unsigned(BD))) <= DIn;
                 next_state <= WaitForRun;
             when MemStoreHold =>
                 MemoryEnable <= '1';
                 WriteEnable <= '1';
-                Address <= R(to_integer(unsigned(IRA)));
-                DOut <= R(to_integer(unsigned(IRB)));
+                Address <= word_t(unsigned(R(to_integer(unsigned(BR)))) + unsigned(resize(signed(BI), 32)));
+                DOut <= R(to_integer(unsigned(DR)));
                 next_state <= WaitForRun;
+            when Freeze =>
+                next_state <= Freeze;
         end case;
     end process;
 end;
