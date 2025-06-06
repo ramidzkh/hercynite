@@ -1,0 +1,18 @@
+name: GHDL Test
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GHDL
+        run: |
+          sudo apt update
+          sudo apt install -y ghdl
+      - name: Run simulation
+        run: |
+          ghdl -a --std=08 src/processor.vhd sim/testbench.vhd
+          ghdl -e --std=08 testbench
+          ghdl -r --std=08 testbench --stop-time=400ns --assert-level=error
