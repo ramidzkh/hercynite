@@ -65,21 +65,38 @@ architecture Mixed of processor is
 
     -- general purpose registers
     type registers_array is array(0 to 31) of word_t;
-    signal R : registers_array;
+    signal R, RNext : registers_array;
 
     -- internal registers
-    signal IP, Instruction : word_t;
+    signal IP, IPNext, Instruction : word_t;
 
     -- decoded instruction
     signal IRA, IRB, IRC : std_logic_vector(4 downto 0);
     signal IImm : std_logic_vector(15 downto 0);
+
+    type StateType is (WaitForRun, InsLoadSetup, InsLoadHold, InsLoadDone, Blehehehe, MemLoadHold, MemLoadDone, MemStoreHold);
+    signal current_state, next_state : StateType;
 begin
+    -- decoded instruction
     IRA <= Instruction(14 downto 10);
     IRB <= Instruction(9 downto 5);
     IRC <= Instruction(4 downto 0);
     IImm <= Instruction(20 downto 15) & Instruction(9 downto 0);
 
-    process
+    process(Reset, Clock)
+    begin
+        if Reset = '1' then
+            current_state <= WaitForRun;
+            R <= (others => (others => '0'));
+            IP <= (others => '0');
+        elsif rising_edge(Clock) then
+            current_state <= next_state;
+            R <= RNext;
+            IP <= IPNext;
+        end if;
+    end process;
+
+    process(all)
         function to_string(slv : std_logic_vector) return string is
             variable result : string(slv'range);
         begin
@@ -89,88 +106,109 @@ begin
             return result;
         end;
     begin
-        R <= (others => (others => '0'));
-        IP <= (others => '0');
+        RNext <= R;
+        IPNext <= IP;
         MemoryEnable <= '0';
         WriteEnable <= '0';
 
-        -- poor reset support
-        wait until falling_edge(Reset);
-
-        loop
-            wait until rising_edge(Clock) and Run = '1';
-            -- Instruction = Memory[IP];
-            MemoryEnable <= '1';
-            WriteEnable <= '0';
-            Address <= IP;
-            wait until rising_edge(Clock);
-            wait until rising_edge(Clock);
-            MemoryEnable <= '0';
-            Instruction <= DIn;
-            wait for 1 ns;
-
-            report "insn: " & to_string(Instruction);
-
-            -- IP++;
-            IP <= word_t(unsigned(IP) + 1);
-
-            if false then
-                -- formatting
-            elsif std_match("00000000000---------------------", Instruction) then
-                -- reg[a] = imm
-                R(to_integer(unsigned(IRA))) <= "0000000000000000" & IImm;
-            elsif std_match("00000000001---------------------", Instruction) then
-                -- reg[a] = imm << 16
-                R(to_integer(unsigned(IRA))) <= IImm & "0000000000000000";
-            elsif std_match("00100000000000000---------------", Instruction) then
-                -- reg[a] = reg[b] + reg[c]
-                R(to_integer(unsigned(IRA))) <= word_t(unsigned(R(to_integer(unsigned(IRB)))) + unsigned(R(to_integer(unsigned(IRC)))));
-            elsif std_match("00100000000000001---------------", Instruction) then
-                -- reg[a] = reg[b] - reg[c]
-                R(to_integer(unsigned(IRA))) <= word_t(unsigned(R(to_integer(unsigned(IRB)))) - unsigned(R(to_integer(unsigned(IRC)))));
-            elsif std_match("00100001000000000---------------", Instruction) then
-                -- reg[a] = reg[b] | reg[c]
-                R(to_integer(unsigned(IRA))) <= R(to_integer(unsigned(IRB))) or R(to_integer(unsigned(IRC)));
-            elsif std_match("00100001000000001---------------", Instruction) then
-                -- reg[a] = reg[b] & reg[c]
-                R(to_integer(unsigned(IRA))) <= R(to_integer(unsigned(IRB))) and R(to_integer(unsigned(IRC)));
-            elsif std_match("00100010000000000---------------", Instruction) then
-                -- reg[a] = memory[reg[b]]
+        case current_state is
+            when WaitForRun =>
+                if Run = '1' then
+                    next_state <= InsLoadSetup;
+                else
+                    next_state <= WaitForRun;
+                end if;
+            when InsLoadSetup =>
                 MemoryEnable <= '1';
-                WriteEnable <= '0';
+                Address <= IP;
+                next_state <= InsLoadHold;
+            when InsLoadHold =>
+                MemoryEnable <= '1';
+                Address <= IP;
+                next_state <= InsLoadDone;
+            when InsLoadDone =>
+                Instruction <= DIn;
+                IPNext <= word_t(unsigned(IP) + 1);
+                next_state <= Blehehehe;
+            when Blehehehe =>
+                report "insn: " & to_string(Instruction);
+
+                if false then
+                    -- formatting
+                elsif std_match("00000000000---------------------", Instruction) then
+                    -- reg[a] = imm
+                    RNext(to_integer(unsigned(IRA))) <= "0000000000000000" & IImm;
+                    next_state <= WaitForRun;
+                elsif std_match("00000000001---------------------", Instruction) then
+                    -- reg[a] = imm << 16
+                    RNext(to_integer(unsigned(IRA))) <= IImm & "0000000000000000";
+                    next_state <= WaitForRun;
+                elsif std_match("00100000000000000---------------", Instruction) then
+                    -- reg[a] = reg[b] + reg[c]
+                    RNext(to_integer(unsigned(IRA))) <= word_t(unsigned(R(to_integer(unsigned(IRB)))) + unsigned(R(to_integer(unsigned(IRC)))));
+                    next_state <= WaitForRun;
+                elsif std_match("00100000000000001---------------", Instruction) then
+                    -- reg[a] = reg[b] - reg[c]
+                    RNext(to_integer(unsigned(IRA))) <= word_t(unsigned(R(to_integer(unsigned(IRB)))) - unsigned(R(to_integer(unsigned(IRC)))));
+                    next_state <= WaitForRun;
+                elsif std_match("00100001000000000---------------", Instruction) then
+                    -- reg[a] = reg[b] | reg[c]
+                    RNext(to_integer(unsigned(IRA))) <= R(to_integer(unsigned(IRB))) or R(to_integer(unsigned(IRC)));
+                    next_state <= WaitForRun;
+                elsif std_match("00100001000000001---------------", Instruction) then
+                    -- reg[a] = reg[b] & reg[c]
+                    RNext(to_integer(unsigned(IRA))) <= R(to_integer(unsigned(IRB))) and R(to_integer(unsigned(IRC)));
+                    next_state <= WaitForRun;
+                elsif std_match("00100010000000000---------------", Instruction) then
+                    -- reg[a] = memory[reg[b]]
+                    MemoryEnable <= '1';
+                    WriteEnable <= '0';
+                    Address <= R(to_integer(unsigned(IRB)));
+                    next_state <= MemLoadHold;
+                elsif std_match("00100010000000001---------------", Instruction) then
+                    -- memory[reg[a]] = reg[b]
+                    MemoryEnable <= '1';
+                    WriteEnable <= '1';
+                    Address <= R(to_integer(unsigned(IRA)));
+                    DOut <= R(to_integer(unsigned(IRB)));
+                    next_state <= MemStoreHold;
+                elsif std_match("100000000000000000000000000-----", Instruction) then
+                    -- reg[c] = IP
+                    RNext(to_integer(unsigned(IRC))) <= IP;
+                    next_state <= WaitForRun;
+                elsif std_match("100000010000000000000000000-----", Instruction) then
+                    -- IP = reg[c]
+                    IPNext <= R(to_integer(unsigned(IRC)));
+                    next_state <= WaitForRun;
+                elsif std_match("11100000000000000-----0000000000", Instruction) then
+                    -- Dump reg[a]
+                    report "Register " & integer'image(to_integer(unsigned(IRA))) & " has value " & to_string(R(to_integer(unsigned(IRA))));
+                    next_state <= WaitForRun;
+                else
+                    -- Dump full processor state
+                    report "todo dump state";
+
+                    if std_match("11111111111111111111111111111111", Instruction) then
+                        next_state <= WaitForRun;
+                    else
+                        report "illegal instruction";
+                        next_state <= current_state;
+                    end if;
+                end if;
+            when MemLoadHold =>
+                MemoryEnable <= '1';
                 Address <= R(to_integer(unsigned(IRB)));
-                wait until rising_edge(Clock);
-                wait until rising_edge(Clock);
-                MemoryEnable <= '0';
-                R(to_integer(unsigned(IRA))) <= DIn;
-            elsif std_match("00100010000000001---------------", Instruction) then
-                -- memory[reg[a]] = reg[b]
+                next_state <= MemLoadDone;
+            when MemLoadDone =>
+                RNext(to_integer(unsigned(IRA))) <= DIn;
+                next_state <= WaitForRun;
+            when MemStoreHold =>
                 MemoryEnable <= '1';
                 WriteEnable <= '1';
                 Address <= R(to_integer(unsigned(IRA)));
                 DOut <= R(to_integer(unsigned(IRB)));
-                wait until rising_edge(Clock);
-                wait until rising_edge(Clock);
-                MemoryEnable <= '0';
-            elsif std_match("100000000000000000000000000-----", Instruction) then
-                -- reg[c] = IP
-                R(to_integer(unsigned(IRC))) <= IP;
-            elsif std_match("100000010000000000000000000-----", Instruction) then
-                -- IP = reg[c]
-                IP <= R(to_integer(unsigned(IRC)));
-            elsif std_match("11100000000000000-----0000000000", Instruction) then
-                -- Dump reg[a]
-                report "Register " & integer'image(to_integer(unsigned(IRA))) & " has value " & to_string(R(to_integer(unsigned(IRA))));
-            else
-                -- Dump full processor state
-                report "todo dump state";
-
-                if not std_match("11111111111111111111111111111111", Instruction) then
-                    report "illegal instruction";
-                    wait;
-                end if;
-            end if;
-        end loop;
+                next_state <= WaitForRun;
+        end case;
     end process;
 end;
 
