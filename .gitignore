@@ -1,0 +1,8 @@
+.idea/
+.vscode/
+.Xil/
+vivado-project/
+
+wave.fst
+wave.gtkw
+work-obj08.cf

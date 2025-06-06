@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<wave_config>
+   <wave_state>
+   </wave_state>
+   <db_ref_list>
+      <db_ref path="testbench_behav.wdb" id="1">
+         <top_modules>
+            <top_module name="pack" />
+            <top_module name="testbench" />
+         </top_modules>
+      </db_ref>
+   </db_ref_list>
+   <zoom_setting>
+      <ZoomStartTime time="0.000 ns"></ZoomStartTime>
+      <ZoomEndTime time="400.000 ns"></ZoomEndTime>
+      <Cursor1Time time="110.000 ns"></Cursor1Time>
+   </zoom_setting>
+   <column_width_setting>
+      <NameColumnWidth column_width="172"></NameColumnWidth>
+      <ValueColumnWidth column_width="66"></ValueColumnWidth>
+   </column_width_setting>
+   <WVObjectSize size="6" />
+   <wvobject type="logic" fp_name="/testbench/clk">
+      <obj_property name="ElementShortName">clk</obj_property>
+      <obj_property name="ObjectShortName">clk</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/testbench/Reset">
+      <obj_property name="ElementShortName">Reset</obj_property>
+      <obj_property name="ObjectShortName">Reset</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/testbench/Run">
+      <obj_property name="ElementShortName">Run</obj_property>
+      <obj_property name="ObjectShortName">Run</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/testbench/Done">
+      <obj_property name="ElementShortName">Done</obj_property>
+      <obj_property name="ObjectShortName">Done</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/testbench/DIN">
+      <obj_property name="ElementShortName">DIN[8:0]</obj_property>
+      <obj_property name="ObjectShortName">DIN[8:0]</obj_property>
+      <obj_property name="Radix">HEXRADIX</obj_property>
+   </wvobject>
+   <wvobject type="group" fp_name="group1417">
+      <obj_property name="label">CPU</obj_property>
+      <obj_property name="DisplayName">label</obj_property>
+      <obj_property name="isExpanded"></obj_property>
+      <wvobject type="other" fp_name="/testbench/UUT/Tstep_Q">
+         <obj_property name="DisplayName">label</obj_property>
+         <obj_property name="ElementShortName">Tstep_Q</obj_property>
+         <obj_property name="ObjectShortName">Tstep_Q</obj_property>
+         <obj_property name="label">Current</obj_property>
+      </wvobject>
+      <wvobject type="other" fp_name="/testbench/UUT/Tstep_D">
+         <obj_property name="DisplayName">label</obj_property>
+         <obj_property name="ElementShortName">Tstep_D</obj_property>
+         <obj_property name="ObjectShortName">Tstep_D</obj_property>
+         <obj_property name="label">Next</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/testbench/UUT/IR">
+         <obj_property name="DisplayName">label</obj_property>
+         <obj_property name="ElementShortName">IR[8:0]</obj_property>
+         <obj_property name="ObjectShortName">IR[8:0]</obj_property>
+         <obj_property name="label">IR[8:0]</obj_property>
+         <obj_property name="Radix">OCTALRADIX</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/testbench/UUT/BusW">
+         <obj_property name="ElementShortName">BusW[0:2][8:0]</obj_property>
+         <obj_property name="ObjectShortName">BusW[0:2][8:0]</obj_property>
+         <obj_property name="isExpanded"></obj_property>
+      </wvobject>
+      <wvobject type="group" fp_name="group1418">
+         <obj_property name="label">Register file</obj_property>
+         <obj_property name="DisplayName">label</obj_property>
+         <obj_property name="isExpanded"></obj_property>
+         <wvobject type="array" fp_name="/testbench/UUT/R0">
+            <obj_property name="ElementShortName">R0[8:0]</obj_property>
+            <obj_property name="ObjectShortName">R0[8:0]</obj_property>
+            <obj_property name="Radix">HEXRADIX</obj_property>
+         </wvobject>
+         <wvobject type="array" fp_name="/testbench/UUT/R1">
+            <obj_property name="ElementShortName">R1[8:0]</obj_property>
+            <obj_property name="ObjectShortName">R1[8:0]</obj_property>
+            <obj_property name="Radix">HEXRADIX</obj_property>
+         </wvobject>
+         <wvobject type="array" fp_name="/testbench/UUT/R2">
+            <obj_property name="ElementShortName">R2[8:0]</obj_property>
+            <obj_property name="ObjectShortName">R2[8:0]</obj_property>
+            <obj_property name="Radix">HEXRADIX</obj_property>
+         </wvobject>
+         <wvobject type="array" fp_name="/testbench/UUT/R3">
+            <obj_property name="ElementShortName">R3[8:0]</obj_property>
+            <obj_property name="ObjectShortName">R3[8:0]</obj_property>
+            <obj_property name="Radix">HEXRADIX</obj_property>
+         </wvobject>
+         <wvobject type="array" fp_name="/testbench/UUT/R4">
+            <obj_property name="ElementShortName">R4[8:0]</obj_property>
+            <obj_property name="ObjectShortName">R4[8:0]</obj_property>
+            <obj_property name="Radix">HEXRADIX</obj_property>
+         </wvobject>
+         <wvobject type="array" fp_name="/testbench/UUT/R5">
+            <obj_property name="ElementShortName">R5[8:0]</obj_property>
+            <obj_property name="ObjectShortName">R5[8:0]</obj_property>
+            <obj_property name="Radix">HEXRADIX</obj_property>
+         </wvobject>
+         <wvobject type="array" fp_name="/testbench/UUT/R6">
+            <obj_property name="ElementShortName">R6[8:0]</obj_property>
+            <obj_property name="ObjectShortName">R6[8:0]</obj_property>
+            <obj_property name="Radix">HEXRADIX</obj_property>
+         </wvobject>
+         <wvobject type="array" fp_name="/testbench/UUT/R7">
+            <obj_property name="ElementShortName">R7[8:0]</obj_property>
+            <obj_property name="ObjectShortName">R7[8:0]</obj_property>
+            <obj_property name="Radix">HEXRADIX</obj_property>
+         </wvobject>
+         <wvobject type="array" fp_name="/testbench/UUT/G">
+            <obj_property name="ElementShortName">G[8:0]</obj_property>
+            <obj_property name="ObjectShortName">G[8:0]</obj_property>
+            <obj_property name="Radix">HEXRADIX</obj_property>
+         </wvobject>
+      </wvobject>
+      <wvobject type="array" fp_name="/testbench/UUT/Rin">
+         <obj_property name="ElementShortName">Rin[7:0]</obj_property>
+         <obj_property name="ObjectShortName">Rin[7:0]</obj_property>
+         <obj_property name="Radix">HEXRADIX</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/testbench/UUT/IRin">
+         <obj_property name="ElementShortName">IRin</obj_property>
+         <obj_property name="ObjectShortName">IRin</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/testbench/UUT/Gin">
+         <obj_property name="ElementShortName">Gin</obj_property>
+         <obj_property name="ObjectShortName">Gin</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/testbench/UUT/AddSub">
+         <obj_property name="ElementShortName">AddSub</obj_property>
+         <obj_property name="ObjectShortName">AddSub</obj_property>
+      </wvobject>
+   </wvobject>
+</wave_config>
