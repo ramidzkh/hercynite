@@ -3,6 +3,7 @@ use IEEE.std_logic_1164.all;
 
 package pack is
     subtype word_t is std_logic_vector(31 downto 0);
+    subtype imm16 is std_logic_vector(15 downto 0);
 
     component processor is
         port(
@@ -22,7 +23,39 @@ package pack is
             R : out std_logic_vector(N - 1 downto 0);
             Rin : in std_logic_vector(N - 1 downto 0));
     end component;
+
+    component alu is
+        port(
+            A, B : in word_t;
+            C : out word_t;
+            Op : in std_logic_vector(4 downto 0);
+            UnknownOp : out std_logic);
+    end component;
+
+    pure function zext_imm(imm: imm16) return word_t;
+    pure function sext_imm(imm: imm16) return word_t;
+    pure function push_imm(imm: imm16) return word_t;
 end package;
+
+library IEEE;
+use IEEE.numeric_std.all;
+
+package body pack is
+    pure function zext_imm(imm: imm16) return word_t is
+    begin
+        return word_t(resize(unsigned(imm), 32));
+    end;
+
+    pure function sext_imm(imm: imm16) return word_t is
+    begin
+        return word_t(resize(signed(imm), 32));
+    end;
+
+    pure function push_imm(imm: imm16) return word_t is
+    begin
+        return imm & (15 downto 0 => '0');
+    end;
+end package body;
 
 library IEEE;
 use IEEE.std_logic_1164.all;
@@ -88,6 +121,10 @@ architecture Mixed of processor is
     -- internal registers
     signal IP, IPNext, Instruction : word_t;
 
+    -- ALU regs (C-types)
+    signal ALUA, ALUB, ALUOut : word_t;
+    signal ALUUnknownOp : std_logic;
+
     type StateType is (WaitForRun, InsLoadSetup, InsLoadHold, InsLoadDone, Blehehehe, MemLoadHold, MemLoadDone, MemStoreHold, Freeze);
     signal current_state, next_state : StateType;
 
@@ -111,6 +148,14 @@ architecture Mixed of processor is
     signal XO : std_logic_vector(0 downto 0);
     signal XA : std_logic_vector(4 downto 0);
 begin
+    alu_inst: component alu port map(
+        A => ALUA,
+        B => ALUB,
+        C => ALUOut,
+        Op => CO,
+        UnknownOp => ALUUnknownOp
+    );
+
     -- instruction decoder
     Class <= Instruction(31 downto 29);
 
@@ -162,6 +207,8 @@ begin
         IPNext <= IP;
         MemoryEnable <= '0';
         WriteEnable <= '0';
+        ALUA <= (others => '-');
+        ALUB <= (others => '-');
 
         case current_state is
             when WaitForRun =>
@@ -189,105 +236,45 @@ begin
                 case Class is
                     when "001" => case BO is
                         when "000" =>
-                            RNext(to_integer(unsigned(BD))) <= word_t(resize(unsigned(BI), 32));
+                            RNext(to_integer(unsigned(BD))) <= zext_imm(BI);
                             next_state <= WaitForRun;
                         when "001" =>
-                            RNext(to_integer(unsigned(BD))) <= word_t(resize(signed(BI), 32));
+                            RNext(to_integer(unsigned(BD))) <= sext_imm(BI);
                             next_state <= WaitForRun;
                         when "010" =>
-                            RNext(to_integer(unsigned(BD))) <= BI & (15 downto 0 => '0');
+                            RNext(to_integer(unsigned(BD))) <= push_imm(BI);
                             next_state <= WaitForRun;
                         when "100" =>
                             MemoryEnable <= '1';
-                            Address <= word_t(unsigned(R(to_integer(unsigned(BR)))) + unsigned(resize(signed(BI), 32)));
+                            Address <= word_t(unsigned(R(to_integer(unsigned(BR)))) + unsigned(sext_imm(BI)));
                             next_state <= MemLoadHold;
                         when "101" =>
                             MemoryEnable <= '1';
                             WriteEnable <= '1';
-                            Address <= word_t(unsigned(R(to_integer(unsigned(BR)))) + unsigned(resize(signed(BI), 32)));
+                            Address <= word_t(unsigned(R(to_integer(unsigned(BR)))) + unsigned(sext_imm(BI)));
                             DOut <= R(to_integer(unsigned(DR)));
                             next_state <= MemStoreHold;
                         when others =>
                             null;
                     end case;
-                    when "010" => case CO is
-                        when "00000" =>
-                            RNext(to_integer(unsigned(CD))) <= word_t(unsigned(R(to_integer(unsigned(CR)))) + unsigned(R(to_integer(unsigned(CS)))));
-                            next_state <= WaitForRun;
-                        when "00001" =>
-                            RNext(to_integer(unsigned(CD))) <= word_t(unsigned(R(to_integer(unsigned(CR)))) - unsigned(R(to_integer(unsigned(CS)))));
-                            next_state <= WaitForRun;
-                        when "00010" =>
-                            report "todo: multiply" severity FAILURE;
-                            next_state <= WaitForRun;
-                        when "00011" =>
-                            report "todo: divide" severity FAILURE;
-                            next_state <= WaitForRun;
-                        when "00100" =>
-                            RNext(to_integer(unsigned(CD))) <= word_t(unsigned(R(to_integer(unsigned(CR)))) and unsigned(R(to_integer(unsigned(CS)))));
-                            next_state <= WaitForRun;
-                        when "00101" =>
-                            RNext(to_integer(unsigned(CD))) <= word_t(unsigned(R(to_integer(unsigned(CR)))) or unsigned(R(to_integer(unsigned(CS)))));
-                            next_state <= WaitForRun;
-                        when "00110" =>
-                            RNext(to_integer(unsigned(CD))) <= word_t(unsigned(R(to_integer(unsigned(CR)))) xor unsigned(R(to_integer(unsigned(CS)))));
-                            next_state <= WaitForRun;
-                        when "00111" =>
-                            RNext(to_integer(unsigned(CD))) <= not (word_t(unsigned(R(to_integer(unsigned(CR)))) or unsigned(R(to_integer(unsigned(CS))))));
-                            next_state <= WaitForRun;
-                        when "10000" =>
-                            if unsigned(R(to_integer(unsigned(CR)))) = unsigned(R(to_integer(unsigned(CS)))) then
-                                RNext(to_integer(unsigned(CD))) <= std_logic_vector(to_unsigned(1, 32));
-                            else
-                                RNext(to_integer(unsigned(CD))) <= std_logic_vector(to_unsigned(0, 32));
-                            end if;
+                    when "010" =>
+                        ALUA <= R(to_integer(unsigned(CR)));
+                        ALUB <= R(to_integer(unsigned(CS)));
 
+                        if ALUUnknownOp = '0' then
+                            RNext(to_integer(unsigned(CD))) <= ALUOut;
                             next_state <= WaitForRun;
-                        when "10001" =>
-                            if unsigned(R(to_integer(unsigned(CR)))) < unsigned(R(to_integer(unsigned(CS)))) then
-                                RNext(to_integer(unsigned(CD))) <= std_logic_vector(to_unsigned(1, 32));
-                            else
-                                RNext(to_integer(unsigned(CD))) <= std_logic_vector(to_unsigned(0, 32));
-                            end if;
-
-                            next_state <= WaitForRun;
-                        when "10010" =>
-                            if unsigned(R(to_integer(unsigned(CR)))) > unsigned(R(to_integer(unsigned(CS)))) then
-                                RNext(to_integer(unsigned(CD))) <= std_logic_vector(to_unsigned(1, 32));
-                            else
-                                RNext(to_integer(unsigned(CD))) <= std_logic_vector(to_unsigned(0, 32));
-                            end if;
-
-                            next_state <= WaitForRun;
-                        when "10101" =>
-                            if signed(R(to_integer(unsigned(CR)))) < signed(R(to_integer(unsigned(CS)))) then
-                                RNext(to_integer(unsigned(CD))) <= std_logic_vector(to_unsigned(1, 32));
-                            else
-                                RNext(to_integer(unsigned(CD))) <= std_logic_vector(to_unsigned(0, 32));
-                            end if;
-
-                            next_state <= WaitForRun;
-                        when "10110" =>
-                            if signed(R(to_integer(unsigned(CR)))) > signed(R(to_integer(unsigned(CS)))) then
-                                RNext(to_integer(unsigned(CD))) <= std_logic_vector(to_unsigned(1, 32));
-                            else
-                                RNext(to_integer(unsigned(CD))) <= std_logic_vector(to_unsigned(0, 32));
-                            end if;
-
-                            next_state <= WaitForRun;
-                        when others =>
-                            null;
-                    end case;
+                        end if;
                     when "011" => case DO is
                         when "000" =>
                             if R(to_integer(unsigned(DR))) = (31 downto 0 => '0') then
-                                IPNext <= word_t(unsigned(IP) + unsigned(resize(signed(DI), 32)));
+                                IPNext <= word_t(unsigned(IP) + unsigned(sext_imm(DI)));
                             end if;
 
                             next_state <= WaitForRun;
                         when "001" =>
                             if R(to_integer(unsigned(DR))) /= (31 downto 0 => '0') then
-                                IPNext <= word_t(unsigned(IP) + unsigned(resize(signed(DI), 32)));
+                                IPNext <= word_t(unsigned(IP) + unsigned(sext_imm(DI)));
                             end if;
 
                             next_state <= WaitForRun;
@@ -335,7 +322,7 @@ begin
                 end case;
             when MemLoadHold =>
                 MemoryEnable <= '1';
-                Address <= word_t(unsigned(R(to_integer(unsigned(BR)))) + unsigned(resize(signed(BI), 32)));
+                Address <= word_t(unsigned(R(to_integer(unsigned(BR)))) + unsigned(sext_imm(BI)));
                 next_state <= MemLoadDone;
             when MemLoadDone =>
                 RNext(to_integer(unsigned(BD))) <= DIn;
@@ -343,7 +330,7 @@ begin
             when MemStoreHold =>
                 MemoryEnable <= '1';
                 WriteEnable <= '1';
-                Address <= word_t(unsigned(R(to_integer(unsigned(BR)))) + unsigned(resize(signed(BI), 32)));
+                Address <= word_t(unsigned(R(to_integer(unsigned(BR)))) + unsigned(sext_imm(BI)));
                 DOut <= R(to_integer(unsigned(DR)));
                 next_state <= WaitForRun;
             when Freeze =>
@@ -374,3 +361,94 @@ begin
         end if;
     end process;
 end;
+
+library IEEE;
+use IEEE.std_logic_1164.all;
+use IEEE.numeric_std.all;
+use work.pack.all;
+
+entity alu is
+    port(
+        A, B : in word_t;
+        C : out word_t;
+        Op : in std_logic_vector(4 downto 0);
+        UnknownOp : out std_logic);
+end entity;
+
+architecture Mixed of alu is
+begin
+    process(all)
+    begin
+        C <= (others => '-');
+        UnknownOp <= '1';
+
+        case Op is
+            when "00000" =>
+                C <= word_t(unsigned(A) + unsigned(B));
+                UnknownOp <= '0';
+            when "00001" =>
+                C <= word_t(unsigned(A) - unsigned(B));
+                UnknownOp <= '0';
+            when "00010" =>
+                -- todo: multiply
+                UnknownOp <= '0';
+            when "00011" =>
+                -- todo: divide
+                UnknownOp <= '0';
+            when "00100" =>
+                C <= word_t(unsigned(A) and unsigned(B));
+                UnknownOp <= '0';
+            when "00101" =>
+                C <= word_t(unsigned(A) or unsigned(B));
+                UnknownOp <= '0';
+            when "00110" =>
+                C <= word_t(unsigned(A) xor unsigned(B));
+                UnknownOp <= '0';
+            when "00111" =>
+                C <= not (word_t(unsigned(A) or unsigned(B)));
+                UnknownOp <= '0';
+            when "10000" =>
+                if unsigned(A) = unsigned(B) then
+                    C <= word_t(to_unsigned(1, 32));
+                else
+                    C <= word_t(to_unsigned(0, 32));
+                end if;
+
+                UnknownOp <= '0';
+            when "10001" =>
+                if unsigned(A) < unsigned(B) then
+                    C <= word_t(to_unsigned(1, 32));
+                else
+                    C <= word_t(to_unsigned(0, 32));
+                end if;
+
+                UnknownOp <= '0';
+            when "10010" =>
+                if unsigned(A) > unsigned(B) then
+                    C <= word_t(to_unsigned(1, 32));
+                else
+                    C <= word_t(to_unsigned(0, 32));
+                end if;
+
+                UnknownOp <= '0';
+            when "10101" =>
+                if signed(A) < signed(B) then
+                    C <= word_t(to_unsigned(1, 32));
+                else
+                    C <= word_t(to_unsigned(0, 32));
+                end if;
+
+                UnknownOp <= '0';
+            when "10110" =>
+                if signed(A) > signed(B) then
+                    C <= word_t(to_unsigned(1, 32));
+                else
+                    C <= word_t(to_unsigned(0, 32));
+                end if;
+
+                UnknownOp <= '0';
+            when others =>
+                null;
+        end case;
+    end process;
+end architecture;
