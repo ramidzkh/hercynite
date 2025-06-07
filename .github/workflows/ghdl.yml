@@ -13,6 +13,6 @@ jobs:
           sudo apt-get install -y ghdl
       - name: Run simulation
         run: |
-          ghdl -a --std=08 -Wall src/processor.vhd sim/testbench.vhd
+          ghdl -a --std=08 -Wall src/processor.vhd src/registers.vhd sim/testbench.vhd
           ghdl -e --std=08 -Wall testbench
           ghdl -r --std=08 -Wall testbench --stop-time=6500ns --assert-level=error

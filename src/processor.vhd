@@ -3,7 +3,10 @@ use IEEE.std_logic_1164.all;
 
 package pack is
     subtype word_t is std_logic_vector(31 downto 0);
+    subtype reg_select_t is std_logic_vector(4 downto 0);
     subtype imm16 is std_logic_vector(15 downto 0);
+
+    constant word_0 : word_t := (others => '0');
 
     component processor is
         port(
@@ -14,6 +17,17 @@ package pack is
             Address : out word_t;
             DIn : in word_t;
             DOut : out word_t);
+    end component;
+
+    component RegisterFile is
+        port (
+            clk   : in std_logic;
+            reset : in std_logic;
+            WrEn  : in std_logic;
+            R1, R2, Wr : in reg_select_t;
+            WrIn : in word_t;
+            R1Out, R2Out : out word_t
+        );
     end component;
 
     component regn is
@@ -114,9 +128,10 @@ architecture Mixed of processor is
     -- 11100000 aaaaa000 00000000 00000000: Dump reg[a]
     -- 11100001 00000000 00000000 00000000: Dump full processor state
 
-    -- general purpose registers
-    type registers_array is array(0 to 31) of word_t;
-    signal R, RNext : registers_array;
+    -- register file
+    signal WrEn : std_logic;
+    signal R1, R2, Wr : reg_select_t;
+    signal R1Out, R2Out, WrIn : word_t;
 
     -- internal registers
     signal IP, IPNext, Instruction : word_t;
@@ -131,23 +146,35 @@ architecture Mixed of processor is
     -- decoded instruction
     signal Class : std_logic_vector(2 downto 0);
 
-    signal BD, BR : std_logic_vector(4 downto 0);
+    signal BD, BR : reg_select_t;
     signal BO : std_logic_vector(2 downto 0);
     signal BI : std_logic_vector(15 downto 0);
 
     signal CO : std_logic_vector(4 downto 0);
-    signal CD, CR, CS : std_logic_vector(4 downto 0);
+    signal CD, CR, CS : reg_select_t;
 
-    signal DR, DS : std_logic_vector(4 downto 0);
+    signal DR, DS : reg_select_t;
     signal DO : std_logic_vector(2 downto 0);
     signal DI : std_logic_vector(15 downto 0);
 
     signal EO : std_logic_vector(1 downto 0);
-    signal ED : std_logic_vector(4 downto 0);
+    signal ED : reg_select_t;
 
     signal XO : std_logic_vector(0 downto 0);
-    signal XA : std_logic_vector(4 downto 0);
+    signal XA : reg_select_t;
 begin
+    regfile: component RegisterFile port map(
+        clk => Clock,
+        reset => Reset,
+        WrEn => WrEn,
+        R1 => R1,
+        R2 => R2,
+        Wr => Wr,
+        WrIn => WrIn,
+        R1Out => R1Out,
+        R2Out => R2Out
+    );
+
     alu_inst: component alu port map(
         A => ALUA,
         B => ALUB,
@@ -184,10 +211,8 @@ begin
     begin
         if Reset = '1' then
             current_state <= WaitForRun;
-            R <= (others => (others => '0'));
-            IP <= (others => '0');
+            IP <= word_0;
         elsif rising_edge(Clock) then
-            R <= RNext;
             IP <= IPNext;
             current_state <= next_state;
         end if;
@@ -203,12 +228,17 @@ begin
             return result;
         end;
     begin
-        RNext <= R;
         IPNext <= IP;
         MemoryEnable <= '0';
         WriteEnable <= '0';
         ALUA <= (others => '-');
         ALUB <= (others => '-');
+
+        WrEn <= '0';
+        R1 <= (others => '-');
+        R2 <= (others => '-');
+        Wr <= (others => '-');
+        WrIn <= (others => '-');
 
         case current_state is
             when WaitForRun =>
@@ -236,57 +266,73 @@ begin
                 case Class is
                     when "001" => case BO is
                         when "000" =>
-                            RNext(to_integer(unsigned(BD))) <= zext_imm(BI);
+                            WrEn <= '1';
+                            Wr <= BD; WrIn <= zext_imm(BI);
                             next_state <= WaitForRun;
                         when "001" =>
-                            RNext(to_integer(unsigned(BD))) <= sext_imm(BI);
+                            WrEn <= '1';
+                            Wr <= BD; WrIn <= sext_imm(BI);
                             next_state <= WaitForRun;
                         when "010" =>
-                            RNext(to_integer(unsigned(BD))) <= push_imm(BI);
+                            WrEn <= '1';
+                            Wr <= BD; WrIn <= push_imm(BI);
                             next_state <= WaitForRun;
                         when "100" =>
+                            R1 <= BR;
                             MemoryEnable <= '1';
-                            Address <= word_t(unsigned(R(to_integer(unsigned(BR)))) + unsigned(sext_imm(BI)));
+                            Address <= word_t(unsigned(R1Out) + unsigned(sext_imm(BI)));
                             next_state <= MemLoadHold;
                         when "101" =>
+                            R1 <= BD;
                             MemoryEnable <= '1';
                             WriteEnable <= '1';
-                            Address <= word_t(unsigned(R(to_integer(unsigned(BR)))) + unsigned(sext_imm(BI)));
-                            DOut <= R(to_integer(unsigned(DR)));
+                            Address <= word_t(unsigned(R1Out) + unsigned(sext_imm(BI)));
+                            DOut <= R2Out; R2 <= BR;
                             next_state <= MemStoreHold;
                         when others =>
                             null;
                     end case;
                     when "010" =>
-                        ALUA <= R(to_integer(unsigned(CR)));
-                        ALUB <= R(to_integer(unsigned(CS)));
+                        ALUA <= R1Out; R1 <= CR;
+                        ALUB <= R2Out; R2 <= CS;
 
                         if ALUUnknownOp = '0' then
-                            RNext(to_integer(unsigned(CD))) <= ALUOut;
+                            WrEn <= '1';
+                            Wr <= CD; WrIn <= ALUOut;
                             next_state <= WaitForRun;
                         end if;
                     when "011" => case DO is
                         when "000" =>
-                            if R(to_integer(unsigned(DR))) = (31 downto 0 => '0') then
+                            R1 <= DR;
+
+                            if R1Out = word_0 then
                                 IPNext <= word_t(unsigned(IP) + unsigned(sext_imm(DI)));
                             end if;
 
                             next_state <= WaitForRun;
                         when "001" =>
-                            if R(to_integer(unsigned(DR))) /= (31 downto 0 => '0') then
+                            R1 <= DR;
+
+                            if R1Out /= word_0 then
                                 IPNext <= word_t(unsigned(IP) + unsigned(sext_imm(DI)));
                             end if;
 
                             next_state <= WaitForRun;
                         when "100" =>
-                            if R(to_integer(unsigned(DR))) = (31 downto 0 => '0') then
-                                IPNext <= R(to_integer(unsigned(DS)));
+                            R1 <= DR;
+                            R2 <= DS;
+
+                            if R1Out = word_0 then
+                                IPNext <= R2Out;
                             end if;
 
                             next_state <= WaitForRun;
                         when "101" =>
-                            if R(to_integer(unsigned(DR))) /= (31 downto 0 => '0') then
-                                IPNext <= R(to_integer(unsigned(DS)));
+                            R1 <= DR;
+                            R2 <= DS;
+
+                            if R1Out /= word_0 then
+                                IPNext <= R2Out;
                             end if;
 
                             next_state <= WaitForRun;
@@ -295,10 +341,11 @@ begin
                     end case;
                     when "100" => case EO is
                         when "00" =>
-                            RNext(to_integer(unsigned(ED))) <= IP;
+                            WrEn <= '1';
+                            Wr <= ED; WrIn <= IP;
                             next_state <= WaitForRun;
                         when "01" =>
-                            IPNext <= R(to_integer(unsigned(ED)));
+                            IPNext <= R1Out; R1 <= ED;
                             next_state <= WaitForRun;
                         when "10" =>
                             next_state <= Freeze;
@@ -309,7 +356,8 @@ begin
                     end case;
                     when "111" => case XO is
                         when "0" =>
-                            report "Register " & integer'image(to_integer(unsigned(XA))) & " has value " & to_string(R(to_integer(unsigned(XA))));
+                            R1 <= XA;
+                            report "Register " & integer'image(to_integer(unsigned(XA))) & " has value " & to_string(R1Out);
                             next_state <= WaitForRun;
                         when "1" =>
                             report "todo: full dump" severity FAILURE;
@@ -321,17 +369,20 @@ begin
                         null;
                 end case;
             when MemLoadHold =>
+                R1 <= BR;
                 MemoryEnable <= '1';
-                Address <= word_t(unsigned(R(to_integer(unsigned(BR)))) + unsigned(sext_imm(BI)));
+                Address <= word_t(unsigned(R1Out) + unsigned(sext_imm(BI)));
                 next_state <= MemLoadDone;
             when MemLoadDone =>
-                RNext(to_integer(unsigned(BD))) <= DIn;
+                WrEn <= '1';
+                Wr <= BD; WrIn <= DIn;
                 next_state <= WaitForRun;
             when MemStoreHold =>
+                R1 <= BD;
                 MemoryEnable <= '1';
                 WriteEnable <= '1';
-                Address <= word_t(unsigned(R(to_integer(unsigned(BR)))) + unsigned(sext_imm(BI)));
-                DOut <= R(to_integer(unsigned(DR)));
+                Address <= word_t(unsigned(R1Out) + unsigned(sext_imm(BI)));
+                DOut <= R2Out; R2 <= BR;
                 next_state <= WaitForRun;
             when Freeze =>
                 next_state <= Freeze;
