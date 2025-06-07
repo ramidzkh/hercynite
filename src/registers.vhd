@@ -24,7 +24,7 @@ begin
             R <= (others => word_0);
         elsif rising_edge(clk) and WrEn = '1' then
             for i in R'range loop
-                if to_integer(unsigned(Wr)) = i then
+                if Wr = std_logic_vector(to_unsigned(i, R1'length)) then
                     R(i) <= WrIn;
                 end if;
             end loop;
@@ -36,7 +36,7 @@ begin
         R1Out <= (others => '-');
 
         for i in R'range loop
-            if to_integer(unsigned(R1)) = i then
+            if R1 = std_logic_vector(to_unsigned(i, R1'length)) then
                 R1Out <= R(i);
             end if;
         end loop;
@@ -47,7 +47,7 @@ begin
         R2Out <= (others => '-');
 
         for i in R'range loop
-            if to_integer(unsigned(R2)) = i then
+            if R2 = std_logic_vector(to_unsigned(i, R2'length)) then
                 R2Out <= R(i);
             end if;
         end loop;

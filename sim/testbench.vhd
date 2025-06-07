@@ -74,6 +74,9 @@ use IEEE.std_logic_1164.all;
 use IEEE.numeric_std.all;
 use work.pack.all;
 
+use std.textio.all;
+use ieee.std_logic_textio.all;
+
 entity tb_ram is
     port(
         clka    : in  std_logic;
@@ -84,42 +87,38 @@ entity tb_ram is
 end;
 
 architecture behavioral of tb_ram is
-    type ram_type is array (0 to 255) of word_t;
-    signal ram : ram_type := (
-        -- see testbench.js
-        00 => "00100000000000011111111111100011",
-        01 => "00100011000000010000000000000011",
-        02 => "00100001000000100000000000000010",
-        03 => "00100010000000001111111111111111",
-        04 => "01000000000100001000010000000000",
-        05 => "01000001000010000100010000000000",
-        06 => "01000000000000000000001000000000",
-        07 => "10000011000000000000000000000000",
-        08 => "01000000000110001100011000000000",
-        09 => "11100000000000000000000000000000",
-        10 => "11100000000110000000000000000000",
-        11 => "01010101001000000000001000000000",
-        12 => "01100100000000011111111111111001",
-        13 => "11100000000000000000000000000000",
-        14 => "11100000000010000000000000000000",
-        15 => "11100000000100000000000000000000",
-        16 => "11100000000110000000000000000000",
-        17 => "11100000001000000000000000000000",
-        18 => "10000010000000000000000000000000",
-        others => (others => 'U')
-    );
+    type ram_type is array (0 to 31) of word_t;
+    signal ram : ram_type := (others => (others => 'U'));
 
     signal read_addr : word_t;
 begin
     process
+        file SOURCE : text;
+        variable myLine : line;
+        variable lineVal : word_t;
+        variable i : integer := 0;
     begin
-        wait until rising_edge(clka);
+        FILE_OPEN(SOURCE, "/dev/stdin", READ_MODE);
 
-        if wea = '1' then
-            ram(to_integer(unsigned(addra))) <= dina;
-        end if;
+        while not ENDFILE(SOURCE) loop
+            readline(SOURCE, myLine);
+            read(myLine, lineVal);
 
-        read_addr <= addra;
+            ram(i) <= lineVal;
+            i := i + 1;
+        end loop;
+
+        FILE_CLOSE(SOURCE);
+
+        loop
+            wait until rising_edge(clka);
+
+            if wea = '1' then
+                ram(to_integer(unsigned(addra))) <= dina;
+            end if;
+
+            read_addr <= addra;
+        end loop;
     end process;
 
     douta <= ram(to_integer(unsigned(read_addr)));
