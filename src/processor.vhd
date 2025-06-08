@@ -124,16 +124,17 @@ architecture Mixed of processor is
 
     -- register file
     signal WrEn : std_logic;
+    signal R1, R2, Wr : reg_select_t;
     signal R1Out, R2Out, WrIn : word_t;
 
     -- internal registers
     signal IP, IPNext : word_t;
 
     -- ALU regs (C-types)
-    signal ALUOut : word_t;
-    signal ALUUnknownOp : std_logic;
+    signal ALUA, ALUB, ALUOut : word_t;
+    signal ALUOp : std_logic_vector(4 downto 0);
 
-    type StateType is (WaitForRun, InsLoadDone, InsExecute, MemLoadDone, Freeze);
+    type StateType is (Fetch, Decode, Execute, Memory, Writeback, Freeze);
     signal current_state, next_state : StateType;
 
     -- parsed instruction
@@ -272,7 +273,15 @@ architecture Mixed of processor is
         return (variant, rs1, rs2, rd, imm, aluop);
     end;
 
+    type DecoratedInstruction is record
+        rs1v, rs2v, rdv : word_t;
+        ip : word_t;
+        write_back : std_logic;
+    end record;
+
     signal parsed : ParsedInstruction;
+    signal decorated : DecoratedInstruction;
+    signal exout_ip : word_t;
 begin
     Frozen <= '1' when current_state = Freeze else '0';
 
@@ -280,26 +289,26 @@ begin
         clk => Clock,
         reset => Reset,
         WrEn => WrEn,
-        R1 => parsed.rs1,
-        R2 => parsed.rs2,
-        Wr => parsed.rd,
+        R1 => R1,
+        R2 => R2,
+        Wr => Wr,
         WrIn => WrIn,
         R1Out => R1Out,
         R2Out => R2Out
     );
 
     alu_inst: component alu port map(
-        A => R1Out,
-        B => R2Out,
+        A => ALUA,
+        B => ALUB,
         C => ALUOut,
-        Op => parsed.aluop,
-        UnknownOp => ALUUnknownOp
+        Op => ALUOp,
+        UnknownOp => open
     );
 
     process(Reset, Clock)
     begin
         if Reset = '1' then
-            current_state <= WaitForRun;
+            current_state <= Fetch;
             IP <= word_0;
         elsif rising_edge(Clock) then
             IP <= IPNext;
@@ -321,94 +330,116 @@ begin
         MemoryEnable <= '0';
         WriteEnable <= '0';
 
+        ALUA <= (others => '-');
+        ALUB <= (others => '-');
+        ALUOp <= (others => '-');
+
+        R1 <= (others => '-');
+        R2 <= (others => '-');
+        Wr <= (others => '-');
         WrEn <= '0';
         WrIn <= (others => '-');
 
         case current_state is
-            when WaitForRun =>
+            when Fetch =>
                 MemoryEnable <= '1';
                 Address <= IP;
 
                 if Run = '1' then
-                    next_state <= InsLoadDone;
+                    next_state <= Decode;
                 else
-                    next_state <= WaitForRun;
+                    next_state <= Fetch;
                 end if;
-            when InsLoadDone =>
-                -- todo: register for parsed instead of implied memory
+            when Decode =>
+                -- todo: register for parsed/decorated instead of implied memory
                 parsed <= parse_instruction(DIn);
-                IPNext <= word_t(unsigned(IP) + 1);
-                next_state <= InsExecute;
-            when InsExecute =>
+                R1 <= parsed.rs1;
+                R2 <= parsed.rs2;
+                decorated <= (R1Out, R2Out, (others => 'X'), word_t(unsigned(IP) + 1), '0');
+                next_state <= Execute;
+            when Execute =>
+                -- todo: same implied memory issue here
+                exout_ip <= decorated.ip;
+
                 case parsed.variant is
                     when StoreImm =>
-                        WrEn <= '1';
-                        WrIn <= parsed.imm;
-                        next_state <= WaitForRun;
+                        decorated.rdv <= parsed.imm;
+                        decorated.write_back <= '1';
+                        next_state <= Memory;
                     when MemLoad =>
                         MemoryEnable <= '1';
-                        Address <= word_t(unsigned(R1Out) + unsigned(parsed.imm));
-                        next_state <= MemLoadDone;
+                        Address <= word_t(unsigned(decorated.rs1v) + unsigned(parsed.imm));
+                        next_state <= Memory;
                     when MemStore =>
                         MemoryEnable <= '1';
                         WriteEnable <= '1';
-                        Address <= word_t(unsigned(R1Out) + unsigned(parsed.imm));
-                        DOut <= R2Out;
-                        next_state <= WaitForRun;
+                        Address <= word_t(unsigned(decorated.rs1v) + unsigned(parsed.imm));
+                        DOut <= decorated.rs2v;
+                        next_state <= Memory;
                     when AluInst =>
-                        if ALUUnknownOp = '0' then
-                            WrEn <= '1';
-                            WrIn <= ALUOut;
-                            next_state <= WaitForRun;
-                        else
-                            next_state <= Freeze;
-                        end if;
+                        ALUA <= decorated.rs1v;
+                        ALUB <= decorated.rs2v;
+                        ALUOp <= parsed.aluop;
+                        decorated.rdv <= ALUOut;
+                        decorated.write_back <= '1';
+                        next_state <= Memory;
                     when JEZI =>
-                        if R1Out = word_0 then
-                            IPNext <= word_t(unsigned(IP) + unsigned(parsed.imm));
+                        if decorated.rs1v = word_0 then
+                            exout_ip <= word_t(unsigned(decorated.ip) + unsigned(parsed.imm));
                         end if;
 
-                        next_state <= WaitForRun;
+                        next_state <= Memory;
                     when JNZI =>
-                        if R1Out /= word_0 then
-                            IPNext <= word_t(unsigned(IP) + unsigned(parsed.imm));
+                        if decorated.rs1v /= word_0 then
+                            exout_ip <= word_t(unsigned(decorated.ip) + unsigned(parsed.imm));
                         end if;
 
-                        next_state <= WaitForRun;
+                        next_state <= Memory;
                     when JEZR =>
-                        if R1Out = word_0 then
-                            IPNext <= R2Out;
+                        if decorated.rs1v = word_0 then
+                            exout_ip <= decorated.rs2v;
                         end if;
 
-                        next_state <= WaitForRun;
+                        next_state <= Memory;
                     when JNZR =>
-                        if R1Out /= word_0 then
-                            IPNext <= R2Out;
+                        if decorated.rs1v /= word_0 then
+                            exout_ip <= decorated.rs2v;
                         end if;
 
-                        next_state <= WaitForRun;
+                        next_state <= Memory;
                     when GetIP =>
-                        WrEn <= '1';
-                        WrIn <= IP;
-                        next_state <= WaitForRun;
+                        decorated.rdv <= decorated.ip;
+                        decorated.write_back <= '1';
+                        next_state <= Memory;
                     when SetIP =>
-                        IPNext <= R1Out;
-                        next_state <= WaitForRun;
+                        exout_ip <= decorated.rs1v;
+                        next_state <= Memory;
                     when Freeze =>
                         next_state <= Freeze;
                     when Nop =>
-                        next_state <= WaitForRun;
+                        next_state <= Memory;
                     when DumpReg =>
-                        report "Register " & integer'image(to_integer(unsigned(parsed.rs1))) & " has value " & to_string(R1Out);
-                        next_state <= WaitForRun;
+                        report "Register " & integer'image(to_integer(unsigned(parsed.rs1))) & " has value " & to_string(decorated.rs1v);
+                        next_state <= Memory;
                     when DumpState =>
                         report "todo: full dump" severity FAILURE;
-                        next_state <= WaitForRun;
+                        next_state <= Memory;
                 end case;
-            when MemLoadDone =>
-                WrEn <= '1';
-                WrIn <= DIn;
-                next_state <= WaitForRun;
+            when Memory =>
+                if parsed.variant = MemLoad then
+                    decorated.rdv <= DIn;
+                end if;
+
+                next_state <= Writeback;
+            when Writeback =>
+                if decorated.write_back = '1' then
+                    WrEn <= '1';
+                    Wr <= parsed.rd;
+                    WrIn <= decorated.rdv;
+                end if;
+
+                IPNext <= exout_ip;
+                next_state <= Fetch;
             when Freeze =>
                 next_state <= Freeze;
         end case;
