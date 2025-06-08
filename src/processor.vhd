@@ -31,14 +31,6 @@ package pack is
         );
     end component;
 
-    component regn is
-        generic(N : natural := 32);
-        port(
-            Reset, Clock, Enable : in std_logic;
-            R : out std_logic_vector(N - 1 downto 0);
-            Rin : in std_logic_vector(N - 1 downto 0));
-    end component;
-
     component alu is
         port(
             A, B : in word_t;
@@ -132,38 +124,155 @@ architecture Mixed of processor is
 
     -- register file
     signal WrEn : std_logic;
-    signal R1, R2, Wr : reg_select_t;
     signal R1Out, R2Out, WrIn : word_t;
 
     -- internal registers
-    signal IP, IPNext, Instruction : word_t;
+    signal IP, IPNext : word_t;
 
     -- ALU regs (C-types)
-    signal ALUA, ALUB, ALUOut : word_t;
+    signal ALUOut : word_t;
     signal ALUUnknownOp : std_logic;
 
     type StateType is (WaitForRun, InsLoadDone, InsExecute, MemLoadDone, Freeze);
     signal current_state, next_state : StateType;
 
-    -- decoded instruction
-    signal Class : std_logic_vector(2 downto 0);
+    -- parsed instruction
+    type InstructionVariant is (StoreImm, MemLoad, MemStore, AluInst, JEZI, JNZI, JEZR, JNZR, GetIP, SetIP, Freeze, Nop, DumpReg, DumpState);
 
-    signal BD, BR : reg_select_t;
-    signal BO : std_logic_vector(2 downto 0);
-    signal BI : std_logic_vector(15 downto 0);
+    type ParsedInstruction is record
+        variant : InstructionVariant;
+        rs1, rs2, rd : reg_select_t;
+        imm : word_t;
+        aluop : std_logic_vector(4 downto 0);
+    end record;
 
-    signal CO : std_logic_vector(4 downto 0);
-    signal CD, CR, CS : reg_select_t;
+    pure function parse_instruction(Instruction : word_t) return ParsedInstruction is
+        variable variant : InstructionVariant := Freeze;
+        variable rs1, rs2, rd : reg_select_t;
+        variable imm : word_t;
+        variable aluop : std_logic_vector(4 downto 0);
 
-    signal DR, DS : reg_select_t;
-    signal DO : std_logic_vector(2 downto 0);
-    signal DI : std_logic_vector(15 downto 0);
+        variable Class : std_logic_vector(2 downto 0);
 
-    signal EO : std_logic_vector(1 downto 0);
-    signal ED : reg_select_t;
+        variable BD, BR : reg_select_t;
+        variable BO : std_logic_vector(2 downto 0);
+        variable BI : std_logic_vector(15 downto 0);
 
-    signal XO : std_logic_vector(0 downto 0);
-    signal XA : reg_select_t;
+        variable CO : std_logic_vector(4 downto 0);
+        variable CD, CR, CS : reg_select_t;
+
+        variable DR, DS : reg_select_t;
+        variable DO : std_logic_vector(2 downto 0);
+        variable DI : std_logic_vector(15 downto 0);
+
+        variable EO : std_logic_vector(1 downto 0);
+        variable ED : reg_select_t;
+
+        variable XO : std_logic_vector(0 downto 0);
+        variable XA : reg_select_t;
+    begin
+        Class := Instruction(31 downto 29);
+
+        BD := Instruction(28 downto 24);
+        BR := Instruction(23 downto 19);
+        BO := Instruction(18 downto 16);
+        BI := Instruction(15 downto 0);
+
+        CO := Instruction(28 downto 24);
+        CD := Instruction(23 downto 19);
+        CR := Instruction(18 downto 14);
+        CS := Instruction(13 downto 9);
+
+        DR := Instruction(28 downto 24);
+        DS := Instruction(23 downto 19);
+        DO := Instruction(18 downto 16);
+        DI := Instruction(15 downto 0);
+
+        EO := Instruction(25 downto 24);
+        ED := Instruction(23 downto 19);
+
+        XO := Instruction(24 downto 24);
+        XA := Instruction(23 downto 19);
+
+        case Class is
+            when "001" => case BO is
+                when "000" =>
+                    variant := StoreImm;
+                    rd := BD;
+                    imm := zext_imm(BI);
+                when "001" =>
+                    variant := StoreImm;
+                    rd := BD;
+                    imm := sext_imm(BI);
+                when "010" =>
+                    variant := StoreImm;
+                    rd := BD;
+                    imm := push_imm(BI);
+                when "100" =>
+                    variant := MemLoad;
+                    rs1 := BR;
+                    rd := BD;
+                    imm := sext_imm(BI);
+                when "101" =>
+                    variant := MemStore;
+                    rs1 := BD;
+                    rs2 := BR;
+                    imm := sext_imm(BI);
+                when others => null;
+            end case;
+            when "010" =>
+                variant := AluInst;
+                aluop := CO;
+                rs1 := CR;
+                rs2 := CS;
+                rd := CD;
+            when "011" => case DO is
+                when "000" =>
+                    variant := JEZI;
+                    rs1 := DR;
+                    imm := sext_imm(DI);
+                when "001" =>
+                    variant := JNZI;
+                    rs1 := DR;
+                    imm := sext_imm(DI);
+                when "100" =>
+                    variant := JEZR;
+                    rs1 := DR;
+                    rs2 := DS;
+                when "101" =>
+                    variant := JNZR;
+                    rs1 := DR;
+                    rs2 := DS;
+                when others => null;
+            end case;
+            when "100" => case EO is
+                when "00" =>
+                    variant := GetIP;
+                    rd := ED;
+                when "01" =>
+                    variant := SetIP;
+                    rs1 := ED;
+                when "10" =>
+                    variant := Freeze;
+                when "11" =>
+                    variant := Nop;
+                when others => null;
+            end case;
+            when "111" => case XO is
+                when "0" =>
+                    variant := DumpReg;
+                    rs1 := XA;
+                when "1" =>
+                    variant := DumpState;
+                when others => null;
+            end case;
+            when others => null;
+        end case;
+
+        return (variant, rs1, rs2, rd, imm, aluop);
+    end;
+
+    signal parsed : ParsedInstruction;
 begin
     Frozen <= '1' when current_state = Freeze else '0';
 
@@ -171,45 +280,21 @@ begin
         clk => Clock,
         reset => Reset,
         WrEn => WrEn,
-        R1 => R1,
-        R2 => R2,
-        Wr => Wr,
+        R1 => parsed.rs1,
+        R2 => parsed.rs2,
+        Wr => parsed.rd,
         WrIn => WrIn,
         R1Out => R1Out,
         R2Out => R2Out
     );
 
     alu_inst: component alu port map(
-        A => ALUA,
-        B => ALUB,
+        A => R1Out,
+        B => R2Out,
         C => ALUOut,
-        Op => CO,
+        Op => parsed.aluop,
         UnknownOp => ALUUnknownOp
     );
-
-    -- instruction decoder
-    Class <= Instruction(31 downto 29);
-
-    BD <= Instruction(28 downto 24);
-    BR <= Instruction(23 downto 19);
-    BO <= Instruction(18 downto 16);
-    BI <= Instruction(15 downto 0);
-
-    CO <= Instruction(28 downto 24);
-    CD <= Instruction(23 downto 19);
-    CR <= Instruction(18 downto 14);
-    CS <= Instruction(13 downto 9);
-
-    DR <= Instruction(28 downto 24);
-    DS <= Instruction(23 downto 19);
-    DO <= Instruction(18 downto 16);
-    DI <= Instruction(15 downto 0);
-
-    EO <= Instruction(25 downto 24);
-    ED <= Instruction(23 downto 19);
-
-    XO <= Instruction(24 downto 24);
-    XA <= Instruction(23 downto 19);
 
     process(Reset, Clock)
     begin
@@ -235,166 +320,97 @@ begin
         IPNext <= IP;
         MemoryEnable <= '0';
         WriteEnable <= '0';
-        ALUA <= (others => '-');
-        ALUB <= (others => '-');
 
         WrEn <= '0';
-        R1 <= (others => '-');
-        R2 <= (others => '-');
-        Wr <= (others => '-');
         WrIn <= (others => '-');
 
         case current_state is
             when WaitForRun =>
+                MemoryEnable <= '1';
+                Address <= IP;
+
                 if Run = '1' then
-                    MemoryEnable <= '1';
-                    Address <= IP;
                     next_state <= InsLoadDone;
                 else
                     next_state <= WaitForRun;
                 end if;
             when InsLoadDone =>
-                Instruction <= DIn;
+                -- todo: register for parsed instead of implied memory
+                parsed <= parse_instruction(DIn);
                 IPNext <= word_t(unsigned(IP) + 1);
                 next_state <= InsExecute;
             when InsExecute =>
-                next_state <= Freeze;
-                report "insn: " & to_string(Instruction);
-
-                case Class is
-                    when "001" => case BO is
-                        when "000" =>
-                            WrEn <= '1';
-                            Wr <= BD; WrIn <= zext_imm(BI);
-                            next_state <= WaitForRun;
-                        when "001" =>
-                            WrEn <= '1';
-                            Wr <= BD; WrIn <= sext_imm(BI);
-                            next_state <= WaitForRun;
-                        when "010" =>
-                            WrEn <= '1';
-                            Wr <= BD; WrIn <= push_imm(BI);
-                            next_state <= WaitForRun;
-                        when "100" =>
-                            R1 <= BR;
-                            MemoryEnable <= '1';
-                            Address <= word_t(unsigned(R1Out) + unsigned(sext_imm(BI)));
-                            next_state <= MemLoadDone;
-                        when "101" =>
-                            R1 <= BD;
-                            MemoryEnable <= '1';
-                            WriteEnable <= '1';
-                            Address <= word_t(unsigned(R1Out) + unsigned(sext_imm(BI)));
-                            DOut <= R2Out; R2 <= BR;
-                            next_state <= WaitForRun;
-                        when others =>
-                            null;
-                    end case;
-                    when "010" =>
-                        ALUA <= R1Out; R1 <= CR;
-                        ALUB <= R2Out; R2 <= CS;
-
+                case parsed.variant is
+                    when StoreImm =>
+                        WrEn <= '1';
+                        WrIn <= parsed.imm;
+                        next_state <= WaitForRun;
+                    when MemLoad =>
+                        MemoryEnable <= '1';
+                        Address <= word_t(unsigned(R1Out) + unsigned(parsed.imm));
+                        next_state <= MemLoadDone;
+                    when MemStore =>
+                        MemoryEnable <= '1';
+                        WriteEnable <= '1';
+                        Address <= word_t(unsigned(R1Out) + unsigned(parsed.imm));
+                        DOut <= R2Out;
+                        next_state <= WaitForRun;
+                    when AluInst =>
                         if ALUUnknownOp = '0' then
                             WrEn <= '1';
-                            Wr <= CD; WrIn <= ALUOut;
+                            WrIn <= ALUOut;
                             next_state <= WaitForRun;
-                        end if;
-                    when "011" => case DO is
-                        when "000" =>
-                            R1 <= DR;
-
-                            if R1Out = word_0 then
-                                IPNext <= word_t(unsigned(IP) + unsigned(sext_imm(DI)));
-                            end if;
-
-                            next_state <= WaitForRun;
-                        when "001" =>
-                            R1 <= DR;
-
-                            if R1Out /= word_0 then
-                                IPNext <= word_t(unsigned(IP) + unsigned(sext_imm(DI)));
-                            end if;
-
-                            next_state <= WaitForRun;
-                        when "100" =>
-                            R1 <= DR;
-                            R2 <= DS;
-
-                            if R1Out = word_0 then
-                                IPNext <= R2Out;
-                            end if;
-
-                            next_state <= WaitForRun;
-                        when "101" =>
-                            R1 <= DR;
-                            R2 <= DS;
-
-                            if R1Out /= word_0 then
-                                IPNext <= R2Out;
-                            end if;
-
-                            next_state <= WaitForRun;
-                        when others =>
-                            null;
-                    end case;
-                    when "100" => case EO is
-                        when "00" =>
-                            WrEn <= '1';
-                            Wr <= ED; WrIn <= IP;
-                            next_state <= WaitForRun;
-                        when "01" =>
-                            IPNext <= R1Out; R1 <= ED;
-                            next_state <= WaitForRun;
-                        when "10" =>
+                        else
                             next_state <= Freeze;
-                        when "11" =>
-                            next_state <= WaitForRun;
-                        when others =>
-                            null;
-                    end case;
-                    when "111" => case XO is
-                        when "0" =>
-                            R1 <= XA;
-                            report "Register " & integer'image(to_integer(unsigned(XA))) & " has value " & to_string(R1Out);
-                            next_state <= WaitForRun;
-                        when "1" =>
-                            report "todo: full dump" severity FAILURE;
-                            next_state <= WaitForRun;
-                        when others =>
-                            null;
-                    end case;
-                    when others =>
-                        null;
+                        end if;
+                    when JEZI =>
+                        if R1Out = word_0 then
+                            IPNext <= word_t(unsigned(IP) + unsigned(parsed.imm));
+                        end if;
+
+                        next_state <= WaitForRun;
+                    when JNZI =>
+                        if R1Out /= word_0 then
+                            IPNext <= word_t(unsigned(IP) + unsigned(parsed.imm));
+                        end if;
+
+                        next_state <= WaitForRun;
+                    when JEZR =>
+                        if R1Out = word_0 then
+                            IPNext <= R2Out;
+                        end if;
+
+                        next_state <= WaitForRun;
+                    when JNZR =>
+                        if R1Out /= word_0 then
+                            IPNext <= R2Out;
+                        end if;
+
+                        next_state <= WaitForRun;
+                    when GetIP =>
+                        WrEn <= '1';
+                        WrIn <= IP;
+                        next_state <= WaitForRun;
+                    when SetIP =>
+                        IPNext <= R1Out;
+                        next_state <= WaitForRun;
+                    when Freeze =>
+                        next_state <= Freeze;
+                    when Nop =>
+                        next_state <= WaitForRun;
+                    when DumpReg =>
+                        report "Register " & integer'image(to_integer(unsigned(parsed.rs1))) & " has value " & to_string(R1Out);
+                        next_state <= WaitForRun;
+                    when DumpState =>
+                        report "todo: full dump" severity FAILURE;
+                        next_state <= WaitForRun;
                 end case;
             when MemLoadDone =>
                 WrEn <= '1';
-                Wr <= BD; WrIn <= DIn;
+                WrIn <= DIn;
                 next_state <= WaitForRun;
             when Freeze =>
                 next_state <= Freeze;
         end case;
-    end process;
-end;
-
-library IEEE;
-use IEEE.std_logic_1164.all;
-
-entity regn is
-    generic(N : natural := 32);
-    port(
-        Reset, Clock, Enable : in std_logic;
-        R : out std_logic_vector(N - 1 downto 0);
-        Rin : in std_logic_vector(N - 1 downto 0));
-end;
-
-architecture Behavior of regn is
-begin
-    process(Reset, Clock)
-    begin
-        if Reset = '1' then
-            R <= (others => '0');
-        elsif rising_edge(Clock) and Enable = '1' then
-            R <= Rin;
-        end if;
     end process;
 end;
