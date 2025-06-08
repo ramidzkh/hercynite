@@ -12,6 +12,7 @@ package pack is
         port(
             -- General
             Reset, Clock, Run : in std_logic;
+            Frozen : out std_logic;
             -- Memory
             MemoryEnable, WriteEnable : out std_logic;
             Address : out word_t;
@@ -80,6 +81,7 @@ entity processor is
     port(
         -- General
         Reset, Clock, Run : in std_logic;
+        Frozen : out std_logic;
         -- Memory
         MemoryEnable, WriteEnable : out std_logic;
         Address : out word_t;
@@ -140,7 +142,7 @@ architecture Mixed of processor is
     signal ALUA, ALUB, ALUOut : word_t;
     signal ALUUnknownOp : std_logic;
 
-    type StateType is (WaitForRun, InsLoadSetup, InsLoadHold, InsLoadDone, Blehehehe, MemLoadHold, MemLoadDone, MemStoreHold, Freeze);
+    type StateType is (WaitForRun, InsLoadDone, InsExecute, MemLoadDone, Freeze);
     signal current_state, next_state : StateType;
 
     -- decoded instruction
@@ -163,6 +165,8 @@ architecture Mixed of processor is
     signal XO : std_logic_vector(0 downto 0);
     signal XA : reg_select_t;
 begin
+    Frozen <= '1' when current_state = Freeze else '0';
+
     regfile: component RegisterFile port map(
         clk => Clock,
         reset => Reset,
@@ -243,23 +247,17 @@ begin
         case current_state is
             when WaitForRun =>
                 if Run = '1' then
-                    next_state <= InsLoadSetup;
+                    MemoryEnable <= '1';
+                    Address <= IP;
+                    next_state <= InsLoadDone;
                 else
                     next_state <= WaitForRun;
                 end if;
-            when InsLoadSetup =>
-                MemoryEnable <= '1';
-                Address <= IP;
-                next_state <= InsLoadHold;
-            when InsLoadHold =>
-                MemoryEnable <= '1';
-                Address <= IP;
-                next_state <= InsLoadDone;
             when InsLoadDone =>
                 Instruction <= DIn;
                 IPNext <= word_t(unsigned(IP) + 1);
-                next_state <= Blehehehe;
-            when Blehehehe =>
+                next_state <= InsExecute;
+            when InsExecute =>
                 next_state <= Freeze;
                 report "insn: " & to_string(Instruction);
 
@@ -281,14 +279,14 @@ begin
                             R1 <= BR;
                             MemoryEnable <= '1';
                             Address <= word_t(unsigned(R1Out) + unsigned(sext_imm(BI)));
-                            next_state <= MemLoadHold;
+                            next_state <= MemLoadDone;
                         when "101" =>
                             R1 <= BD;
                             MemoryEnable <= '1';
                             WriteEnable <= '1';
                             Address <= word_t(unsigned(R1Out) + unsigned(sext_imm(BI)));
                             DOut <= R2Out; R2 <= BR;
-                            next_state <= MemStoreHold;
+                            next_state <= WaitForRun;
                         when others =>
                             null;
                     end case;
@@ -368,21 +366,9 @@ begin
                     when others =>
                         null;
                 end case;
-            when MemLoadHold =>
-                R1 <= BR;
-                MemoryEnable <= '1';
-                Address <= word_t(unsigned(R1Out) + unsigned(sext_imm(BI)));
-                next_state <= MemLoadDone;
             when MemLoadDone =>
                 WrEn <= '1';
                 Wr <= BD; WrIn <= DIn;
-                next_state <= WaitForRun;
-            when MemStoreHold =>
-                R1 <= BD;
-                MemoryEnable <= '1';
-                WriteEnable <= '1';
-                Address <= word_t(unsigned(R1Out) + unsigned(sext_imm(BI)));
-                DOut <= R2Out; R2 <= BR;
                 next_state <= WaitForRun;
             when Freeze =>
                 next_state <= Freeze;

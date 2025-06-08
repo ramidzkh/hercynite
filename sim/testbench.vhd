@@ -22,7 +22,7 @@ architecture Mixed of testbench is
     end component;
 
     -- UUT
-    signal Reset, Run : std_logic;
+    signal Reset, Run, Frozen : std_logic;
     signal MemoryEnable, WriteEnable : std_logic;
     signal Address : word_t;
     signal DIn : word_t;
@@ -33,10 +33,20 @@ begin
     begin
         Clock <= '0';
 
-        loop
+        while Frozen /= '1' loop
             wait for ClockPeriod / 2;
             Clock <= not Clock;
         end loop;
+
+        report "UUT reported frozen";
+
+        -- extra cycles
+        for i in 1 to 10 loop
+            wait for ClockPeriod / 2;
+            Clock <= not Clock;
+        end loop;
+
+        wait;
     end process;
 
     -- RAM
@@ -47,6 +57,7 @@ begin
         Reset => Reset,
         Clock => Clock,
         Run => Run,
+        Frozen => Frozen,
         MemoryEnable => MemoryEnable,
         WriteEnable => WriteEnable,
         Address => Address,
@@ -70,12 +81,11 @@ begin
 end;
 
 library IEEE;
+use STD.textio.all;
 use IEEE.std_logic_1164.all;
 use IEEE.numeric_std.all;
+use IEEE.std_logic_textio.all;
 use work.pack.all;
-
-use std.textio.all;
-use ieee.std_logic_textio.all;
 
 entity tb_ram is
     port(
