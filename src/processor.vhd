@@ -288,18 +288,18 @@ architecture Mixed of processor is
     type idex_t is record
         enabled : std_logic;
         parsed: ParsedInstruction;
-        rs1v, rs2v, rdv : word_t;
+        rs1v, rs2v : word_t;
         ip : word_t;
         write_back : std_logic;
+
+        branch_taken : std_logic;
+        branch_target : word_t;
     end record;
     type exmem_t is record
         enabled : std_logic;
         parsed : ParsedInstruction;
         rdv : word_t;
         write_back : std_logic;
-
-        branch_taken : std_logic;
-        branch_target : word_t;
     end record;
     type memwb_t is record
         enabled : std_logic;
@@ -388,14 +388,47 @@ begin
                 parsed => ifid.parsed,
                 rs1v => R1Out,
                 rs2v => R2Out,
-                rdv  => (others => 'X'),
                 ip   => word_t(unsigned(ifid.ip)),
-                write_back => '0'
+                write_back => '0',
+                branch_taken => '0',
+                branch_target => (others => 'X')
             );
+
+            case idex.parsed.variant is
+                when JEZI =>
+                    if R1Out = word_0 then
+                        idex.branch_taken <= '1';
+                        idex.branch_target <= word_t(unsigned(ifid.ip) + unsigned(ifid.parsed.imm));
+                    end if;
+                when JNZI =>
+                    if R1Out /= word_0 then
+                        idex.branch_taken <= '1';
+                        idex.branch_target <= word_t(unsigned(ifid.ip) + unsigned(ifid.parsed.imm));
+                    end if;
+                when JEZR =>
+                    if idex.rs1v = word_0 then
+                        idex.branch_taken <= '1';
+                        idex.branch_target <= R2Out;
+                    end if;
+                when JNZR =>
+                    if idex.rs1v /= word_0 then
+                        idex.branch_taken <= '1';
+                        idex.branch_target <= R2Out;
+                    end if;
+                when SetIP =>
+                    idex.branch_taken <= '1';
+                    idex.branch_target <= R1Out;
+                when others =>
+                    null;
+            end case;
         else
             idex.enabled <= '0';
         end if;
     end process;
+
+    -- If a branch was taken, override IP ASAP
+    IPOverride <= idex.enabled and idex.branch_taken;
+    IPOverrideTo <= idex.branch_target;
 
     -- EX stage
 
@@ -410,10 +443,8 @@ begin
             exmem <= (
                 enabled => '1',
                 parsed => idex.parsed,
-                rdv  => idex.rdv,
-                write_back => idex.write_back,
-                branch_taken => '0',
-                branch_target => (others => 'X')
+                rdv  => (others => 'X'),
+                write_back => idex.write_back
             );
 
             case idex.parsed.variant is
@@ -431,34 +462,15 @@ begin
                 when AluInst =>
                     exmem.rdv <= ALUOut;
                     exmem.write_back <= '1';
-                when JEZI =>
-                    if idex.rs1v = word_0 then
-                        exmem.branch_taken <= '1';
-                        exmem.branch_target <= word_t(unsigned(idex.ip) + unsigned(idex.parsed.imm));
-                    end if;
-                when JNZI =>
-                    if idex.rs1v /= word_0 then
-                        exmem.branch_taken <= '1';
-                        exmem.branch_target <= word_t(unsigned(idex.ip) + unsigned(idex.parsed.imm));
-                    end if;
-                when JEZR =>
-                    if idex.rs1v = word_0 then
-                        exmem.branch_taken <= '1';
-                        exmem.branch_target <= idex.rs2v;
-                    end if;
-                when JNZR =>
-                    if idex.rs1v /= word_0 then
-                        exmem.branch_taken <= '1';
-                        exmem.branch_target <= idex.rs2v;
-                    end if;
+                when JEZI | JNZI | JEZR | JNZR | SetIP =>
+                    null;
                 when GetIP =>
                     exmem.rdv <= idex.ip;
                     exmem.write_back <= '1';
-                when SetIP =>
-                    exmem.branch_taken <= '1';
-                    exmem.branch_target <= idex.rs1v;
                 when Freeze =>
+                    null;
                 when Nop =>
+                    null;
                 when DumpReg =>
                     report "Register " & integer'image(to_integer(unsigned(idex.parsed.rs1))) & " has value " & to_string(idex.rs1v);
                 when DumpState =>
@@ -468,10 +480,6 @@ begin
             exmem.enabled <= '0';
         end if;
     end process;
-
-    -- If a branch was taken, override IP ASAP
-    IPOverride <= exmem.enabled and exmem.branch_taken;
-    IPOverrideTo <= exmem.branch_target;
 
     -- Freeze as soon as a freeze instruction passes execute
     StartFreeze <= exmem.enabled and '1' when exmem.parsed.variant = Freeze else '0';
