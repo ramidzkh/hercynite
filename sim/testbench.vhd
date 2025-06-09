@@ -23,10 +23,9 @@ architecture Mixed of testbench is
 
     -- UUT
     signal Reset, Run, Frozen : std_logic;
-    signal MemoryEnable, WriteEnable : std_logic;
+    signal MemoryEnable : std_logic;
     signal Address : word_t;
     signal DIn : word_t;
-    signal DOut : word_t;
 begin
     -- Clock
     process
@@ -50,7 +49,7 @@ begin
     end process;
 
     -- RAM
-    RAM : component tb_ram port map(Clock, WriteEnable, Address, DOut, DIn);
+    RAM : component tb_ram port map(Clock, '0', Address, (others => 'X'), DIn);
 
     -- UUT
     UUT : component processor port map(
@@ -59,10 +58,8 @@ begin
         Run => Run,
         Frozen => Frozen,
         MemoryEnable => MemoryEnable,
-        WriteEnable => WriteEnable,
         Address => Address,
-        DIn => DIn,
-        DOut => DOut
+        DIn => DIn
     );
 
     -- Stimulus
@@ -103,22 +100,17 @@ architecture behavioral of tb_ram is
     signal read_addr : word_t;
 begin
     process
-        file SOURCE : text;
         variable myLine : line;
         variable lineVal : word_t;
         variable i : integer := 0;
     begin
-        FILE_OPEN(SOURCE, "/dev/stdin", READ_MODE);
-
-        while not ENDFILE(SOURCE) loop
-            readline(SOURCE, myLine);
+        while not ENDFILE(INPUT) loop
+            readline(INPUT, myLine);
             read(myLine, lineVal);
 
             ram(i) <= lineVal;
             i := i + 1;
         end loop;
-
-        FILE_CLOSE(SOURCE);
 
         loop
             wait until rising_edge(clka);

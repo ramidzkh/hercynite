@@ -13,11 +13,10 @@ package pack is
             -- General
             Reset, Clock, Run : in std_logic;
             Frozen : out std_logic;
-            -- Memory
-            MemoryEnable, WriteEnable : out std_logic;
+            -- Instruction Memory
+            MemoryEnable : out std_logic;
             Address : out word_t;
-            DIn : in word_t;
-            DOut : out word_t);
+            DIn : in word_t);
     end component;
 
     component RegisterFile is
@@ -74,11 +73,10 @@ entity processor is
         -- General
         Reset, Clock, Run : in std_logic;
         Frozen : out std_logic;
-        -- Memory
-        MemoryEnable, WriteEnable : out std_logic;
+        -- Instruction Memory
+        MemoryEnable : out std_logic;
         Address : out word_t;
-        DIn : in word_t;
-        DOut : out word_t);
+        DIn : in word_t);
 end;
 
 architecture Mixed of processor is
@@ -305,13 +303,12 @@ architecture Mixed of processor is
         enabled : std_logic;
         rd : reg_select_t;
         rdv : word_t;
-        write_back : std_logic;
     end record;
 
-    signal ifid : ifid_t;
-    signal idex : idex_t;
-    signal exmem : exmem_t;
-    signal memwb : memwb_t;
+    signal ifid, ifid_next : ifid_t;
+    signal idex, idex_next : idex_t;
+    signal exmem, exmem_next : exmem_t;
+    signal memwb, memwb_next : memwb_t;
 
     signal StartFreeze : std_logic;
 begin
@@ -334,6 +331,23 @@ begin
         Op => ALUOp,
         UnknownOp => open
     );
+
+    -- Pipeline registers
+    process (Clock, Reset)
+    begin
+        if Reset = '1' then
+            -- todo: reset
+            ifid.enabled <= '0';
+            idex.enabled <= '0';
+            exmem.enabled <= '0';
+            memwb.enabled <= '0';
+        elsif rising_edge(Clock) then
+            ifid <= ifid_next;
+            idex <= idex_next;
+            exmem <= exmem_next;
+            memwb <= memwb_next;
+        end if;
+    end process;
 
     -- Frozen state latch
     process(Reset, Clock)
@@ -368,9 +382,9 @@ begin
     process(all)
     begin
         if Run = '1' then
-            ifid <= ('1', parse_instruction(DIn), IP);
+            ifid_next <= ('1', parse_instruction(DIn), IP);
         else
-            ifid.enabled <= '0';
+            ifid_next.enabled <= '0';
         end if;
     end process;
 
@@ -383,7 +397,7 @@ begin
     process(all)
     begin
         if ifid.enabled = '1' then
-            idex <= (
+            idex_next <= (
                 enabled => '1',
                 parsed => ifid.parsed,
                 rs1v => R1Out,
@@ -394,35 +408,35 @@ begin
                 branch_target => (others => 'X')
             );
 
-            case idex.parsed.variant is
+            case ifid.parsed.variant is
                 when JEZI =>
                     if R1Out = word_0 then
-                        idex.branch_taken <= '1';
-                        idex.branch_target <= word_t(unsigned(ifid.ip) + unsigned(ifid.parsed.imm));
+                        idex_next.branch_taken <= '1';
+                        idex_next.branch_target <= word_t(unsigned(ifid.ip) + unsigned(ifid.parsed.imm));
                     end if;
                 when JNZI =>
                     if R1Out /= word_0 then
-                        idex.branch_taken <= '1';
-                        idex.branch_target <= word_t(unsigned(ifid.ip) + unsigned(ifid.parsed.imm));
+                        idex_next.branch_taken <= '1';
+                        idex_next.branch_target <= word_t(unsigned(ifid.ip) + unsigned(ifid.parsed.imm));
                     end if;
                 when JEZR =>
-                    if idex.rs1v = word_0 then
-                        idex.branch_taken <= '1';
-                        idex.branch_target <= R2Out;
+                    if R1Out = word_0 then
+                        idex_next.branch_taken <= '1';
+                        idex_next.branch_target <= R2Out;
                     end if;
                 when JNZR =>
-                    if idex.rs1v /= word_0 then
-                        idex.branch_taken <= '1';
-                        idex.branch_target <= R2Out;
+                    if R1Out /= word_0 then
+                        idex_next.branch_taken <= '1';
+                        idex_next.branch_target <= R2Out;
                     end if;
                 when SetIP =>
-                    idex.branch_taken <= '1';
-                    idex.branch_target <= R1Out;
+                    idex_next.branch_taken <= '1';
+                    idex_next.branch_target <= R1Out;
                 when others =>
                     null;
             end case;
         else
-            idex.enabled <= '0';
+            idex_next.enabled <= '0';
         end if;
     end process;
 
@@ -440,7 +454,7 @@ begin
     process(all)
     begin
         if idex.enabled = '1' then
-            exmem <= (
+            exmem_next <= (
                 enabled => '1',
                 parsed => idex.parsed,
                 rdv  => (others => 'X'),
@@ -449,8 +463,8 @@ begin
 
             case idex.parsed.variant is
                 when StoreImm =>
-                    exmem.rdv <= idex.parsed.imm;
-                    exmem.write_back <= '1';
+                    exmem_next.rdv <= idex.parsed.imm;
+                    exmem_next.write_back <= '1';
                 when MemLoad =>
                     --MemoryEnable <= '1';
                     --Address <= word_t(unsigned(idex.rs1v) + unsigned(idex.parsed.imm));
@@ -460,13 +474,13 @@ begin
                     --Address <= word_t(unsigned(idex.rs1v) + unsigned(idex.parsed.imm));
                     --DOut <= idex.rs2v;
                 when AluInst =>
-                    exmem.rdv <= ALUOut;
-                    exmem.write_back <= '1';
+                    exmem_next.rdv <= ALUOut;
+                    exmem_next.write_back <= '1';
                 when JEZI | JNZI | JEZR | JNZR | SetIP =>
                     null;
                 when GetIP =>
-                    exmem.rdv <= idex.ip;
-                    exmem.write_back <= '1';
+                    exmem_next.rdv <= idex.ip;
+                    exmem_next.write_back <= '1';
                 when Freeze =>
                     null;
                 when Nop =>
@@ -477,7 +491,7 @@ begin
                     report "todo: full dump" severity FAILURE;
             end case;
         else
-            exmem.enabled <= '0';
+            exmem_next.enabled <= '0';
         end if;
     end process;
 
@@ -488,23 +502,22 @@ begin
     process(all)
     begin
         if exmem.enabled = '1' then
-            memwb <= (
-                enabled => '1',
+            memwb_next <= (
+                enabled => exmem.write_back,
                 rd => exmem.parsed.rd,
-                rdv  => exmem.rdv,
-                write_back => exmem.write_back
+                rdv  => exmem.rdv
             );
 
             if exmem.parsed.variant = MemLoad then
-                --memwb.rdv <= DIn;
+                --memwb_next.rdv <= DIn;
             end if;
         else
-            memwb.enabled <= '0';
+            memwb_next.enabled <= '0';
         end if;
     end process;
 
     -- WB stage
-    WrEn <= memwb.enabled and memwb.write_back;
+    WrEn <= memwb.enabled;
     Wr <= memwb.rd;
     WrIn <= memwb.rdv;
 end;
