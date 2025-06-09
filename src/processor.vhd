@@ -128,17 +128,24 @@ architecture Mixed of processor is
     signal R1Out, R2Out, WrIn : word_t;
 
     -- internal registers
-    signal IP, IPNext : word_t;
+    signal IP, IPOverrideTo : word_t;
+    signal IPOverride : std_logic;
 
     -- ALU regs (C-types)
     signal ALUA, ALUB, ALUOut : word_t;
     signal ALUOp : std_logic_vector(4 downto 0);
 
-    type StateType is (Fetch, Decode, Execute, Memory, Writeback, Freeze);
-    signal current_state, next_state : StateType;
-
     -- parsed instruction
     type InstructionVariant is (StoreImm, MemLoad, MemStore, AluInst, JEZI, JNZI, JEZR, JNZR, GetIP, SetIP, Freeze, Nop, DumpReg, DumpState);
+
+    function to_string(slv : std_logic_vector) return string is
+        variable result : string(slv'range);
+    begin
+        for i in slv'range loop
+            result(i) := character'VALUE(std_ulogic'image(slv(i)));
+        end loop;
+        return result;
+    end;
 
     type ParsedInstruction is record
         variant : InstructionVariant;
@@ -273,18 +280,41 @@ architecture Mixed of processor is
         return (variant, rs1, rs2, rd, imm, aluop);
     end;
 
-    type DecoratedInstruction is record
+    type ifid_t is record
+        enabled : std_logic;
+        parsed: ParsedInstruction;
+        ip : word_t;
+    end record;
+    type idex_t is record
+        enabled : std_logic;
+        parsed: ParsedInstruction;
         rs1v, rs2v, rdv : word_t;
         ip : word_t;
         write_back : std_logic;
     end record;
+    type exmem_t is record
+        enabled : std_logic;
+        parsed : ParsedInstruction;
+        rdv : word_t;
+        write_back : std_logic;
 
-    signal parsed : ParsedInstruction;
-    signal decorated : DecoratedInstruction;
-    signal exout_ip : word_t;
+        branch_taken : std_logic;
+        branch_target : word_t;
+    end record;
+    type memwb_t is record
+        enabled : std_logic;
+        rd : reg_select_t;
+        rdv : word_t;
+        write_back : std_logic;
+    end record;
+
+    signal ifid : ifid_t;
+    signal idex : idex_t;
+    signal exmem : exmem_t;
+    signal memwb : memwb_t;
+
+    signal StartFreeze : std_logic;
 begin
-    Frozen <= '1' when current_state = Freeze else '0';
-
     regfile: component RegisterFile port map(
         clk => Clock,
         reset => Reset,
@@ -305,143 +335,168 @@ begin
         UnknownOp => open
     );
 
+    -- Frozen state latch
     process(Reset, Clock)
     begin
         if Reset = '1' then
-            current_state <= Fetch;
-            IP <= word_0;
+            Frozen <= '0';
         elsif rising_edge(Clock) then
-            IP <= IPNext;
-            current_state <= next_state;
+            Frozen <= Frozen or StartFreeze;
         end if;
     end process;
 
-    process(all)
-        function to_string(slv : std_logic_vector) return string is
-            variable result : string(slv'range);
-        begin
-            for i in slv'range loop
-                result(i) := character'VALUE(std_ulogic'image(slv(i)));
-            end loop;
-            return result;
-        end;
+    -- IP counter
+    process(Reset, Clock)
     begin
-        IPNext <= IP;
-        MemoryEnable <= '0';
-        WriteEnable <= '0';
-
-        ALUA <= (others => '-');
-        ALUB <= (others => '-');
-        ALUOp <= (others => '-');
-
-        R1 <= (others => '-');
-        R2 <= (others => '-');
-        Wr <= (others => '-');
-        WrEn <= '0';
-        WrIn <= (others => '-');
-
-        case current_state is
-            when Fetch =>
-                MemoryEnable <= '1';
-                Address <= IP;
-
-                if Run = '1' then
-                    next_state <= Decode;
-                else
-                    next_state <= Fetch;
-                end if;
-            when Decode =>
-                -- todo: register for parsed/decorated instead of implied memory
-                parsed <= parse_instruction(DIn);
-                R1 <= parsed.rs1;
-                R2 <= parsed.rs2;
-                decorated <= (R1Out, R2Out, (others => 'X'), word_t(unsigned(IP) + 1), '0');
-                next_state <= Execute;
-            when Execute =>
-                -- todo: same implied memory issue here
-                exout_ip <= decorated.ip;
-
-                case parsed.variant is
-                    when StoreImm =>
-                        decorated.rdv <= parsed.imm;
-                        decorated.write_back <= '1';
-                        next_state <= Memory;
-                    when MemLoad =>
-                        MemoryEnable <= '1';
-                        Address <= word_t(unsigned(decorated.rs1v) + unsigned(parsed.imm));
-                        next_state <= Memory;
-                    when MemStore =>
-                        MemoryEnable <= '1';
-                        WriteEnable <= '1';
-                        Address <= word_t(unsigned(decorated.rs1v) + unsigned(parsed.imm));
-                        DOut <= decorated.rs2v;
-                        next_state <= Memory;
-                    when AluInst =>
-                        ALUA <= decorated.rs1v;
-                        ALUB <= decorated.rs2v;
-                        ALUOp <= parsed.aluop;
-                        decorated.rdv <= ALUOut;
-                        decorated.write_back <= '1';
-                        next_state <= Memory;
-                    when JEZI =>
-                        if decorated.rs1v = word_0 then
-                            exout_ip <= word_t(unsigned(decorated.ip) + unsigned(parsed.imm));
-                        end if;
-
-                        next_state <= Memory;
-                    when JNZI =>
-                        if decorated.rs1v /= word_0 then
-                            exout_ip <= word_t(unsigned(decorated.ip) + unsigned(parsed.imm));
-                        end if;
-
-                        next_state <= Memory;
-                    when JEZR =>
-                        if decorated.rs1v = word_0 then
-                            exout_ip <= decorated.rs2v;
-                        end if;
-
-                        next_state <= Memory;
-                    when JNZR =>
-                        if decorated.rs1v /= word_0 then
-                            exout_ip <= decorated.rs2v;
-                        end if;
-
-                        next_state <= Memory;
-                    when GetIP =>
-                        decorated.rdv <= decorated.ip;
-                        decorated.write_back <= '1';
-                        next_state <= Memory;
-                    when SetIP =>
-                        exout_ip <= decorated.rs1v;
-                        next_state <= Memory;
-                    when Freeze =>
-                        next_state <= Freeze;
-                    when Nop =>
-                        next_state <= Memory;
-                    when DumpReg =>
-                        report "Register " & integer'image(to_integer(unsigned(parsed.rs1))) & " has value " & to_string(decorated.rs1v);
-                        next_state <= Memory;
-                    when DumpState =>
-                        report "todo: full dump" severity FAILURE;
-                        next_state <= Memory;
-                end case;
-            when Memory =>
-                if parsed.variant = MemLoad then
-                    decorated.rdv <= DIn;
-                end if;
-
-                next_state <= Writeback;
-            when Writeback =>
-                if decorated.write_back = '1' then
-                    WrEn <= '1';
-                    Wr <= parsed.rd;
-                    WrIn <= decorated.rdv;
-                end if;
-
-                IPNext <= exout_ip;
-                next_state <= Fetch;
-            when Freeze =>
-                next_state <= Freeze;
-        end case;
+        if Reset = '1' then
+            IP <= word_0;
+        elsif rising_edge(Clock) then
+            if IPOverride = '1' then
+                IP <= IPOverrideTo;
+            else
+                IP <= word_t(unsigned(IP) + 1);
+            end if;
+        end if;
     end process;
+
+    -- IF stage
+
+    -- Always load instruction
+    MemoryEnable <= '1';
+    Address <= IP;
+
+    process(all)
+    begin
+        if Run = '1' then
+            ifid <= ('1', parse_instruction(DIn), IP);
+        else
+            ifid.enabled <= '0';
+        end if;
+    end process;
+
+    -- ID stage
+
+    -- Load operands
+    R1 <= ifid.parsed.rs1;
+    R2 <= ifid.parsed.rs2;
+
+    process(all)
+    begin
+        if ifid.enabled = '1' then
+            idex <= (
+                enabled => '1',
+                parsed => ifid.parsed,
+                rs1v => R1Out,
+                rs2v => R2Out,
+                rdv  => (others => 'X'),
+                ip   => word_t(unsigned(ifid.ip)),
+                write_back => '0'
+            );
+        else
+            idex.enabled <= '0';
+        end if;
+    end process;
+
+    -- EX stage
+
+    -- Prepare ALU with fetched operands
+    ALUA <= idex.rs1v;
+    ALUB <= idex.rs2v;
+    ALUOp <= idex.parsed.aluop;
+
+    process(all)
+    begin
+        if idex.enabled = '1' then
+            exmem <= (
+                enabled => '1',
+                parsed => idex.parsed,
+                rdv  => idex.rdv,
+                write_back => idex.write_back,
+                branch_taken => '0',
+                branch_target => (others => 'X')
+            );
+
+            case idex.parsed.variant is
+                when StoreImm =>
+                    exmem.rdv <= idex.parsed.imm;
+                    exmem.write_back <= '1';
+                when MemLoad =>
+                    --MemoryEnable <= '1';
+                    --Address <= word_t(unsigned(idex.rs1v) + unsigned(idex.parsed.imm));
+                when MemStore =>
+                    --MemoryEnable <= '1';
+                    --WriteEnable <= '1';
+                    --Address <= word_t(unsigned(idex.rs1v) + unsigned(idex.parsed.imm));
+                    --DOut <= idex.rs2v;
+                when AluInst =>
+                    exmem.rdv <= ALUOut;
+                    exmem.write_back <= '1';
+                when JEZI =>
+                    if idex.rs1v = word_0 then
+                        exmem.branch_taken <= '1';
+                        exmem.branch_target <= word_t(unsigned(idex.ip) + unsigned(idex.parsed.imm));
+                    end if;
+                when JNZI =>
+                    if idex.rs1v /= word_0 then
+                        exmem.branch_taken <= '1';
+                        exmem.branch_target <= word_t(unsigned(idex.ip) + unsigned(idex.parsed.imm));
+                    end if;
+                when JEZR =>
+                    if idex.rs1v = word_0 then
+                        exmem.branch_taken <= '1';
+                        exmem.branch_target <= idex.rs2v;
+                    end if;
+                when JNZR =>
+                    if idex.rs1v /= word_0 then
+                        exmem.branch_taken <= '1';
+                        exmem.branch_target <= idex.rs2v;
+                    end if;
+                when GetIP =>
+                    exmem.rdv <= idex.ip;
+                    exmem.write_back <= '1';
+                when SetIP =>
+                    exmem.branch_taken <= '1';
+                    exmem.branch_target <= idex.rs1v;
+                when Freeze =>
+                when Nop =>
+                when DumpReg =>
+                    report "Register " & integer'image(to_integer(unsigned(idex.parsed.rs1))) & " has value " & to_string(idex.rs1v);
+                when DumpState =>
+                    report "todo: full dump" severity FAILURE;
+            end case;
+        else
+            exmem.enabled <= '0';
+        end if;
+    end process;
+
+    -- If a branch was taken, override IP ASAP
+    IPOverride <= exmem.enabled and exmem.branch_taken;
+    IPOverrideTo <= exmem.branch_target;
+
+    -- Freeze as soon as a freeze instruction passes execute
+    StartFreeze <= exmem.enabled and '1' when exmem.parsed.variant = Freeze else '0';
+
+    -- MEM stage
+    process(all)
+    begin
+        if exmem.enabled = '1' then
+            memwb <= (
+                enabled => '1',
+                rd => exmem.parsed.rd,
+                rdv  => exmem.rdv,
+                write_back => exmem.write_back
+            );
+
+            if exmem.parsed.variant = MemLoad then
+                --memwb.rdv <= DIn;
+            end if;
+        else
+            memwb.enabled <= '0';
+        end if;
+    end process;
+
+    -- WB stage
+    WrEn <= memwb.enabled and memwb.write_back;
+    Wr <= memwb.rd;
+    WrIn <= memwb.rdv;
 end;

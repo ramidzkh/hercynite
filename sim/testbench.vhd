@@ -97,7 +97,7 @@ entity tb_ram is
 end;
 
 architecture behavioral of tb_ram is
-    type ram_type is array (0 to 31) of word_t;
+    type ram_type is array (0 to 63) of word_t;
     signal ram : ram_type := (others => (others => 'U'));
 
     signal read_addr : word_t;
